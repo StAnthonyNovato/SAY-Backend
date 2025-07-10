@@ -3,7 +3,7 @@
 # This software is released under the MIT License.
 # https://opensource.org/licenses/MIT
 
-from flask import Flask
+from flask import Flask, jsonify
 from flask_cors import CORS
 from .bp.email_subscription import email_subscription_bp
 
@@ -15,6 +15,10 @@ CORS(app, resources = {
 })
 
 app.register_blueprint(email_subscription_bp, url_prefix='/api')
+
+@app.errorhandler(500)
+def handle(error):
+    return "An internal server error occurred. Please try again later.", 500
 
 @app.route('/')
 def index():

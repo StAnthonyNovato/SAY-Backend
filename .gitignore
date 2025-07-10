@@ -1,4 +1,6 @@
 email-subscribers.json
+email-rate-limit.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
