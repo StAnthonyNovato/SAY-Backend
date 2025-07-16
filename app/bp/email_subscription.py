@@ -8,11 +8,11 @@ from os import getenv, path
 from json import load, dump
 from uuid import uuid4
 from datetime import datetime, date
-from ..emailmanager import SMTPManager
+from ..mail.emailmanager import SMTPManager
 
 email_subscription_bp = Blueprint('email_subscription', __name__)
 
-ACTUALLY_SEND_EMAIL = False
+ACTUALLY_SEND_EMAIL = not getenv("NO_EMAIL") # If NO_EMAIL is set, emails will not be sent
 
 if not path.isfile("email-subscribers.json"):
     with open("email-subscribers.json", "w") as file:
@@ -178,12 +178,12 @@ def subscribe():
     with open("email-subscribers.json", "w") as file:
         dump(SUBSCRIBERS_DATA, file)
 
-    # TODO: add logic to send either a confirmation email or a welcome email
+    # Send confirmation email to new subscriber
     try:
         send_confirmation_email(email, user)
         return jsonify({
             "success": True,
-            "message": "Subscription successful (NO SEND)",
+            "message": "Subscription successful - confirmation email sent",
             "email": email,
             "action": "subscribed"
         }), 200
