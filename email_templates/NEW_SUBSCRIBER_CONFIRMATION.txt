@@ -1,0 +1,12 @@
+Hey there!
+
+Thank you for subscribing to our email list! We're excited to have you on board.
+
+To confirm your subscription, please click the link below:
+{confirmation_link}
+If you didn't subscribe, no worries! You can safely ignore this email.
+If you have any questions or need assistance, feel free to reach out to us at {support_email}.
+
+Best regards,
+St. Anthony Youth Ministry Team
+https://stanthonyyouth.org

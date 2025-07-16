@@ -1,0 +1,4 @@
+From: St. Anthony Youth Mail Delivery Subsystem <{email}>
+Subject: {subject}
+
+{content}

@@ -1,0 +1,9 @@
+Hey there!
+
+We're sorry to see you go. Your unsubscription has been processed successfully.
+
+If you have any questions or need assistance, feel free to reach out to us at {{ support_email }}.
+
+Best regards,
+St. Anthony Youth Ministry Team
+https://stanthonyyouth.org

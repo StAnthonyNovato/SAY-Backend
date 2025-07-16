@@ -1,0 +1,232 @@
+<!--
+ Copyright (c) 2025 Damien Boisvert (AlphaGameDeveloper)
+ 
+ This software is released under the MIT License.
+ https://opensource.org/licenses/MIT
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subscription Confirmed - St. Anthony Youth Confirmation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Georgia', serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            max-width: 600px;
+            width: 100%;
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #4a5568 0%, #2d3748 100%);
+            color: white;
+            padding: 40px 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.2em;
+            font-weight: 300;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+        }
+        
+        .header .subtitle {
+            font-size: 1.1em;
+            opacity: 0.9;
+            font-style: italic;
+        }
+        
+        .content {
+            padding: 40px 30px;
+        }
+        
+        .success-icon {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .success-icon::before {
+            content: "✓";
+            display: inline-block;
+            width: 80px;
+            height: 80px;
+            background: #48bb78;
+            color: white;
+            border-radius: 50%;
+            line-height: 80px;
+            font-size: 40px;
+            font-weight: bold;
+        }
+        
+        .message {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .message h2 {
+            color: #2d3748;
+            font-size: 1.8em;
+            margin-bottom: 15px;
+            font-weight: 400;
+        }
+        
+        .message p {
+            color: #4a5568;
+            font-size: 1.1em;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+        
+        .info-box {
+            background: #f7fafc;
+            border-left: 4px solid #4299e1;
+            padding: 20px;
+            margin: 25px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        
+        .info-box h3 {
+            color: #2b6cb0;
+            margin-bottom: 10px;
+            font-size: 1.2em;
+        }
+        
+        .info-box ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .info-box li {
+            color: #4a5568;
+            margin-bottom: 8px;
+            padding-left: 20px;
+            position: relative;
+        }
+        
+        .info-box li::before {
+            content: "•";
+            color: #4299e1;
+            font-weight: bold;
+            position: absolute;
+            left: 0;
+        }
+        
+        .cta-section {
+            background: #edf2f7;
+            padding: 25px;
+            border-radius: 8px;
+            text-align: center;
+            margin-top: 30px;
+        }
+        
+        .cta-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #4299e1 0%, #3182ce 100%);
+            color: white;
+            padding: 15px 30px;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 1.1em;
+            transition: transform 0.2s ease;
+            margin: 10px;
+        }
+        
+        .cta-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(66, 153, 225, 0.3);
+        }
+        
+        .footer {
+            text-align: center;
+            padding: 25px;
+            color: #718096;
+            font-size: 0.9em;
+            border-top: 1px solid #e2e8f0;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+                border-radius: 10px;
+            }
+            
+            .header {
+                padding: 30px 20px;
+            }
+            
+            .header h1 {
+                font-size: 1.8em;
+            }
+            
+            .content {
+                padding: 30px 20px;
+            }
+            
+            .cta-button {
+                display: block;
+                margin: 10px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>St. Anthony Youth</h1>
+            <div class="subtitle">E-mail Newsletter</div>
+        </div>
+        
+        <div class="content">
+            <div class="success-icon"></div>
+            
+            <div class="message">
+                <h2>Subscription Confirmed!</h2>
+                <p>Thank you for joining our St. Anthony Youth Confirmation community. You're now part of an incredible journey of faith, growth, and fellowship.</p>
+            </div>
+            
+            <div class="info-box">
+                <h3>What happens next?</h3>
+                <ul>
+                    <li>You'll receive weekly updates about upcoming confirmation classes</li>
+                    <li>Important announcements about retreat dates and special events</li>
+                    <li>Resources and materials to support your spiritual journey</li>
+                    <li>Community updates and volunteer opportunities</li>
+                </ul>
+            </div>
+            
+            <div class="cta-section">
+                <p style="margin-bottom: 20px; color: #4a5568; font-size: 1.1em;">Ready to take the next step?</p>
+                <a href="#" class="cta-button">View Program Schedule</a>
+                <a href="#" class="cta-button">Join Our Community</a>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Questions? Contact us at <a style="color: inherit; text-decoration: none;" href="mailto:ale@stanthonynovato.org">ale@stanthonynovato.org</a> or call (555) 123-4567</p>
+            <p style="margin-top: 10px;">St. Anthony Catholic Church Youth Ministry</p>
+        </div>
+    </div>
+</body>
+</html>
