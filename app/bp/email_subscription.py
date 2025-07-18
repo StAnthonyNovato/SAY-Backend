@@ -9,6 +9,7 @@ from json import load, dump
 from uuid import uuid4
 from datetime import datetime, date
 from ..mail.emailmanager import SMTPManager
+from constants import JSON_DUMP_OPTIONS
 
 email_subscription_bp = Blueprint('email_subscription', __name__)
 
@@ -39,6 +40,9 @@ SMTP_PASSWORD = getenv("GOOGLE_APP_PASSWORD")
 with open("email_templates/NEW_SUBSCRIBER_CONFIRMATION.txt", "r") as file:
     NEW_SUBSCRIBER_CONFIRMATION_TEMPLATE = file.read()
 
+with open("email_templates/NEW_SUBSCRIBER_CONFIRMATION.html", "r") as file:
+    NEW_SUBSCRIBER_CONFIRMATION_HTML_TEMPLATE = file.read()
+
 def can_send_email(email: str) -> bool:
     """Check if user can send email (max 2 per day)"""
     today = date.today().isoformat()
@@ -62,7 +66,7 @@ def record_email_sent(email: str):
     EMAIL_RATE_LIMIT[email].append(datetime.now().isoformat())
     
     with open("email-rate-limit.json", "w") as file:
-        dump(EMAIL_RATE_LIMIT, file)
+        dump(EMAIL_RATE_LIMIT, file, indent=JSON_DUMP_OPTIONS["indent"])
 
 def send_confirmation_email(email: str, user: dict):
     if not ACTUALLY_SEND_EMAIL:
@@ -80,7 +84,7 @@ def send_confirmation_email(email: str, user: dict):
             "http://localhost:8000" if current_app.debug else "https://say-services.alphagame.dev"
         )
 
-        subject = f"St. Anthony Youth Newsletter - {user['email']}"
+        subject = f"St. Anthony Youth Newsletter Confirmation - {user['email']}"
         
         # Use SMTPManager to send email with template
         with SMTPManager(
@@ -93,7 +97,10 @@ def send_confirmation_email(email: str, user: dict):
                 to_email=email,
                 subject=subject,
                 template_content=NEW_SUBSCRIBER_CONFIRMATION_TEMPLATE,
+                html_template_content=NEW_SUBSCRIBER_CONFIRMATION_HTML_TEMPLATE,
+                # template variables
                 confirmation_link=f"{DOMAIN}/api/confirm?code={user['confirmation_code']}",
+                confirmation_code=user['confirmation_code'],
                 support_email=getenv("EMAIL", "damien@alphagame.dev")
             )
         
@@ -146,7 +153,7 @@ def subscribe():
                 return jsonify({
                     "success": False,
                     "error": "Already subscribed",
-                    "message": "Email already subscribed and confirmed",
+                    "message": "Email already subscribed and confirmed.  You're all good!",
                     "email": email
                 }), 409
             else:
@@ -155,15 +162,15 @@ def subscribe():
                     send_confirmation_email(email, existing_user)
                     return jsonify({
                         "success": True,
-                        "message": "Confirmation email resent",
+                        "message": "Confirmation email resent.  Please check your inbox (or spam folder)",
                         "email": email,
                         "action": "resent"
                     }), 200
                 except Exception as e:
                     return jsonify({
                         "success": False,
-                        "error": "Email sending failed",
-                        "message": str(e),
+                        "error": str(e),
+                        "message": "We've had a problem sending the confirmation email.  Please try again later.",
                         "email": email
                     }), 429
 
@@ -176,22 +183,22 @@ def subscribe():
     SUBSCRIBERS_DATA.append(user)
 
     with open("email-subscribers.json", "w") as file:
-        dump(SUBSCRIBERS_DATA, file)
+        dump(SUBSCRIBERS_DATA, file, indent=JSON_DUMP_OPTIONS["indent"])
 
     # Send confirmation email to new subscriber
     try:
         send_confirmation_email(email, user)
         return jsonify({
             "success": True,
-            "message": "Subscription successful - confirmation email sent",
+            "message": "Subscription Successful.  We've sent you a confirmation email. (You might need to check your spam folder)",
             "email": email,
             "action": "subscribed"
         }), 200
     except Exception as e:
         return jsonify({
             "success": False,
-            "error": "Email sending failed",
-            "message": str(e),
+            "error": str(e),
+            "message": "Email sending failed.  Please try again later.",
             "email": email
         }), 429
 
@@ -219,7 +226,7 @@ def confirm():
                 }), 200
             user['confirmed'] = True
             with open("email-subscribers.json", "w") as file:
-                dump(SUBSCRIBERS_DATA, file)
+                dump(SUBSCRIBERS_DATA, file, indent=JSON_DUMP_OPTIONS["indent"])
             return jsonify({
                 "success": True,
                 "message": "Email confirmed successfully",
