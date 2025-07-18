@@ -24,8 +24,7 @@ def process_site_posts():
     for post in posts:
         print(f"Processing post: {post.title} by {post.author} ({post})")
 
-    
-
+    for x in posts: print(x._id, x.title, x.author, x.date, x.url)
     return {"status": "success", "posts_processed": len(posts)}
 
 if __name__ == "__main__":
