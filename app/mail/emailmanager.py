@@ -9,6 +9,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional, Dict, List, Any
 from datetime import datetime, timedelta
+from logging import getLogger
 
 class EmailHeaders:
     def __init__(self, headers: dict):
@@ -154,12 +155,14 @@ class SMTPManager:
         if not self.smtp_connection:
             if not self.connect():
                 raise Exception("Failed to establish SMTP connection")
-
+        print(html_content)
         try:
+            h_From = f"St. Anthony Youth Mail Delivery Subsystem <{self.smtp_from_email}>"
             if html_content:
+                getLogger(__name__).info("Sending HTML email")
                 # Create multipart message
                 msg = MIMEMultipart('alternative')
-                msg['From'] = self.smtp_from_email
+                msg['From'] = h_From
                 msg['To'] = to_email
                 msg['Subject'] = subject
                 
@@ -173,9 +176,10 @@ class SMTPManager:
                 if self.smtp_connection:
                     self.smtp_connection.send_message(msg)
             else:
+                getLogger(__name__).warning("Sending plain text email")
                 # Simple text email
                 msg = MIMEText(message)
-                msg['From'] = self.smtp_from_email
+                msg['From'] = h_From
                 msg['To'] = to_email
                 msg['Subject'] = subject
                 
@@ -190,11 +194,14 @@ class SMTPManager:
             print(f"Error sending email: {e}")
             raise
 
-    def send_template_email(self, to_email: str, subject: str, template_content: str, 
+    def send_template_email(self, to_email: str, subject: str, template_content: str, html_template_content: Optional[str] = None,
                            max_per_email_per_day: int = 2, bypass_rate_limit: bool = False, **template_vars):
         """Send email using a template with variable substitution and rate limiting"""
         formatted_content = template_content.format(**template_vars)
+        formatted_html_content = html_template_content.format(**template_vars) if html_template_content else None
+        if not html_template_content and not formatted_html_content: getLogger(__name__).warning("No HTML content provided, sending plain text email only")
         self.send_email(to_email, subject, formatted_content, 
+                       html_content=formatted_html_content,
                        max_per_email_per_day=max_per_email_per_day, 
                        bypass_rate_limit=bypass_rate_limit)
 
