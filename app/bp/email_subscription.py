@@ -5,37 +5,20 @@
 
 from flask import Blueprint, request, current_app, jsonify
 from os import getenv, path
-from json import load, dump
-from uuid import uuid4
 from datetime import datetime, date
+from ..database import db
+from ..models.email import EmailSubscriber, EmailRateLimit
 from ..mail.emailmanager import SMTPManager
-from constants import JSON_DUMP_OPTIONS
+from ..config import Config
 
 email_subscription_bp = Blueprint('email_subscription', __name__)
 
 ACTUALLY_SEND_EMAIL = not getenv("NO_EMAIL") # If NO_EMAIL is set, emails will not be sent
 
-if not path.isfile("email-subscribers.json"):
-    with open("email-subscribers.json", "w") as file:
-        file.write("[]")
-        # schema: [email:str, confirmed:bool, confirmation_code:str]
-
-if not path.isfile("email-rate-limit.json"):
-    with open("email-rate-limit.json", "w") as file:
-        file.write("{}")
-        # schema: {email: [timestamp1, timestamp2, ...]}
-
-with open("email-subscribers.json", "r") as file:
-    SUBSCRIBERS_DATA = load(file)
-
-with open("email-rate-limit.json", "r") as file:
-    EMAIL_RATE_LIMIT = load(file)
-
 # SMTP configuration
 SMTP_SERVER = 'smtp.gmail.com'
 SMTP_PORT = 587
 SMTP_PASSWORD = getenv("GOOGLE_APP_PASSWORD")
-
 
 with open("email_templates/NEW_SUBSCRIBER_CONFIRMATION.txt", "r") as file:
     NEW_SUBSCRIBER_CONFIRMATION_TEMPLATE = file.read()
@@ -44,31 +27,26 @@ with open("email_templates/NEW_SUBSCRIBER_CONFIRMATION.html", "r") as file:
     NEW_SUBSCRIBER_CONFIRMATION_HTML_TEMPLATE = file.read()
 
 def can_send_email(email: str) -> bool:
-    """Check if user can send email (max 2 per day)"""
-    today = date.today().isoformat()
+    """Check if user can send email (max per day based on config)"""
+    today_start = datetime.combine(date.today(), datetime.min.time())
+    tomorrow_start = datetime.combine(date.today(), datetime.min.time()).replace(day=date.today().day + 1) if date.today().day < 28 else datetime.combine(date.today(), datetime.min.time()).replace(month=date.today().month + 1, day=1) if date.today().month < 12 else datetime.combine(date.today(), datetime.min.time()).replace(year=date.today().year + 1, month=1, day=1)
     
-    if email not in EMAIL_RATE_LIMIT:
-        EMAIL_RATE_LIMIT[email] = []
+    # Count emails sent today
+    emails_today = EmailRateLimit.query.filter(
+        EmailRateLimit.email == email,
+        EmailRateLimit.timestamp >= today_start,
+        EmailRateLimit.timestamp < tomorrow_start
+    ).count()
     
-    # Clean up old entries (keep only today's entries)
-    EMAIL_RATE_LIMIT[email] = [
-        timestamp for timestamp in EMAIL_RATE_LIMIT[email] 
-        if timestamp.startswith(today)
-    ]
-    
-    return (len(EMAIL_RATE_LIMIT[email]) < 2) or current_app.debug # Allow debug mode to send more emails w/o rate limiting
+    return (emails_today < Config.EMAIL_RATE_LIMIT_PER_DAY) or current_app.debug
 
 def record_email_sent(email: str):
     """Record that an email was sent to this address"""
-    if email not in EMAIL_RATE_LIMIT:
-        EMAIL_RATE_LIMIT[email] = []
-    
-    EMAIL_RATE_LIMIT[email].append(datetime.now().isoformat())
-    
-    with open("email-rate-limit.json", "w") as file:
-        dump(EMAIL_RATE_LIMIT, file, indent=JSON_DUMP_OPTIONS["indent"])
+    rate_limit_record = EmailRateLimit(email=email)
+    db.session.add(rate_limit_record)
+    db.session.commit()
 
-def send_confirmation_email(email: str, user: dict):
+def send_confirmation_email(email: str, subscriber: EmailSubscriber):
     if not ACTUALLY_SEND_EMAIL:
         print(f"Skipping email sending for {email} (ACTUALLY_SEND_EMAIL is False)")
         return
@@ -84,7 +62,7 @@ def send_confirmation_email(email: str, user: dict):
             "http://localhost:8000" if current_app.debug else "https://say-services.alphagame.dev"
         )
 
-        subject = f"St. Anthony Youth Newsletter Confirmation - {user['email']}"
+        subject = f"St. Anthony Youth Newsletter Confirmation - {subscriber.email}"
         
         # Use SMTPManager to send email with template
         with SMTPManager(
@@ -99,8 +77,8 @@ def send_confirmation_email(email: str, user: dict):
                 template_content=NEW_SUBSCRIBER_CONFIRMATION_TEMPLATE,
                 html_template_content=NEW_SUBSCRIBER_CONFIRMATION_HTML_TEMPLATE,
                 # template variables
-                confirmation_link=f"{DOMAIN}/api/confirm?code={user['confirmation_code']}",
-                confirmation_code=user['confirmation_code'],
+                confirmation_link=f"{DOMAIN}/api/confirm?code={subscriber.confirmation_code}",
+                confirmation_code=subscriber.confirmation_code,
                 support_email=getenv("EMAIL", "damien@alphagame.dev")
             )
         
@@ -112,8 +90,6 @@ def send_confirmation_email(email: str, user: dict):
 
 @email_subscription_bp.route('/subscribe', methods=['POST'])
 def subscribe():
-    global SUBSCRIBERS_DATA
-
     # Logic for subscribing a user to the email list
     # Handle both JSON and form data
     if request.is_json:
@@ -147,65 +123,62 @@ def subscribe():
         }), 429
 
     # Check if email already exists
-    for existing_user in reversed(SUBSCRIBERS_DATA): # Reversed because we want to check the most recent entries first
-        if existing_user['email'] == email:
-            if existing_user['confirmed']:
+    existing_subscriber = EmailSubscriber.query.filter_by(email=email).first()
+    
+    if existing_subscriber:
+        if existing_subscriber.confirmed:
+            return jsonify({
+                "success": False,
+                "error": "Already subscribed",
+                "message": "Email already subscribed and confirmed. You're all good!",
+                "email": email
+            }), 409
+        else:
+            # Email exists but not confirmed, resend confirmation
+            try:
+                send_confirmation_email(email, existing_subscriber)
+                return jsonify({
+                    "success": True,
+                    "message": "Confirmation email resent. Please check your inbox (or spam folder)",
+                    "email": email,
+                    "action": "resent"
+                }), 200
+            except Exception as e:
                 return jsonify({
                     "success": False,
-                    "error": "Already subscribed",
-                    "message": "Email already subscribed and confirmed.  You're all good!",
+                    "error": str(e),
+                    "message": "We've had a problem sending the confirmation email. Please try again later.",
                     "email": email
-                }), 409
-            else:
-                # Email exists but not confirmed, resend confirmation
-                try:
-                    send_confirmation_email(email, existing_user)
-                    return jsonify({
-                        "success": True,
-                        "message": "Confirmation email resent.  Please check your inbox (or spam folder)",
-                        "email": email,
-                        "action": "resent"
-                    }), 200
-                except Exception as e:
-                    return jsonify({
-                        "success": False,
-                        "error": str(e),
-                        "message": "We've had a problem sending the confirmation email.  Please try again later.",
-                        "email": email
-                    }), 429
+                }), 429
 
-    user = {
-        "email": email,
-        "confirmed": False,
-        "confirmation_code": str(uuid4())
-    }
-
-    SUBSCRIBERS_DATA.append(user)
-
-    with open("email-subscribers.json", "w") as file:
-        dump(SUBSCRIBERS_DATA, file, indent=JSON_DUMP_OPTIONS["indent"])
-
-    # Send confirmation email to new subscriber
+    # Create new subscriber
+    subscriber = EmailSubscriber(email=email)
+    
     try:
-        send_confirmation_email(email, user)
+        db.session.add(subscriber)
+        db.session.commit()
+        
+        # Send confirmation email to new subscriber
+        send_confirmation_email(email, subscriber)
+        
         return jsonify({
             "success": True,
-            "message": "Subscription Successful.  We've sent you a confirmation email. (You might need to check your spam folder)",
+            "message": "Subscription Successful. We've sent you a confirmation email. (You might need to check your spam folder)",
             "email": email,
             "action": "subscribed"
         }), 200
+        
     except Exception as e:
+        db.session.rollback()
         return jsonify({
             "success": False,
             "error": str(e),
-            "message": "Email sending failed.  Please try again later.",
+            "message": "Email sending failed. Please try again later.",
             "email": email
         }), 429
 
 @email_subscription_bp.route('/confirm', methods=['GET'])
 def confirm():
-    global SUBSCRIBERS_DATA
-
     # Logic for confirming a user's email address
     code = request.args.get('code')
     if not code:
@@ -215,30 +188,33 @@ def confirm():
             "message": "Confirmation code is required"
         }), 400
 
-    for user in SUBSCRIBERS_DATA:
-        if user['confirmation_code'] == code:
-            if user["confirmed"]:
-                return jsonify({
-                    "success": True,
-                    "message": "Email already confirmed",
-                    "email": user["email"],
-                    "status": "already_confirmed"
-                }), 200
-            user['confirmed'] = True
-            with open("email-subscribers.json", "w") as file:
-                dump(SUBSCRIBERS_DATA, file, indent=JSON_DUMP_OPTIONS["indent"])
-            return jsonify({
-                "success": True,
-                "message": "Email confirmed successfully",
-                "email": user["email"],
-                "status": "confirmed"
-            }), 200
-
+    subscriber = EmailSubscriber.query.filter_by(confirmation_code=code).first()
+    
+    if not subscriber:
+        return jsonify({
+            "success": False,
+            "error": "Invalid confirmation code",
+            "message": "The confirmation code is invalid or expired"
+        }), 404
+    
+    if subscriber.confirmed:
+        return jsonify({
+            "success": True,
+            "message": "Email already confirmed",
+            "email": subscriber.email,
+            "status": "already_confirmed"
+        }), 200
+    
+    # Confirm the subscriber
+    subscriber.confirm()
+    db.session.commit()
+    
     return jsonify({
-        "success": False,
-        "error": "Invalid confirmation code",
-        "message": "The confirmation code is invalid or expired"
-    }), 404
+        "success": True,
+        "message": "Email confirmed successfully",
+        "email": subscriber.email,
+        "status": "confirmed"
+    }), 200
 
 # a good cURL command to send subscribe damien@alphagame.dev would be:
 # curl -X POST -H "Content-Type: application/json" -d '{"email": "damien@alphagame.dev"}' http://localhost:8000/api/subscribe

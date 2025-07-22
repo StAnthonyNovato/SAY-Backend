@@ -5,9 +5,16 @@
 
 from flask import Flask, jsonify
 from flask_cors import CORS
+from .config import Config
+from .database import db, init_db
 from .bp.email_subscription import email_subscription_bp
 
 app = Flask(__name__)
+app.config.from_object(Config)
+
+# Initialize database
+init_db(app)
+
 CORS(app, resources = {
     "/*": {
         "origins": "*" # TODO: Change this to the specific origin in production
