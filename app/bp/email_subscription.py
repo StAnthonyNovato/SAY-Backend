@@ -29,7 +29,7 @@ with open("email_templates/NEW_SUBSCRIBER_CONFIRMATION.html", "r") as file:
 def can_send_email(email: str) -> bool:
     """Check if user can send email (max per day based on config)"""
     today_start = datetime.combine(date.today(), datetime.min.time())
-    tomorrow_start = datetime.combine(date.today(), datetime.min.time()).replace(day=date.today().day + 1) if date.today().day < 28 else datetime.combine(date.today(), datetime.min.time()).replace(month=date.today().month + 1, day=1) if date.today().month < 12 else datetime.combine(date.today(), datetime.min.time()).replace(year=date.today().year + 1, month=1, day=1)
+    tomorrow_start = today_start + timedelta(days=1)
     
     # Count emails sent today
     emails_today = EmailRateLimit.query.filter(
