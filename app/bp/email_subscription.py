@@ -6,6 +6,7 @@
 from flask import Blueprint, request, current_app, jsonify
 from os import getenv, path
 from datetime import datetime, date
+from sqlalchemy import and_
 from ..database import db
 from ..models.email import EmailSubscriber, EmailRateLimit
 from ..mail.emailmanager import SMTPManager
@@ -27,15 +28,17 @@ with open("email_templates/NEW_SUBSCRIBER_CONFIRMATION.html", "r") as file:
     NEW_SUBSCRIBER_CONFIRMATION_HTML_TEMPLATE = file.read()
 
 def can_send_email(email: str) -> bool:
-    """Check if user can send email (max per day based on config)"""
+    """Check if user can send email (max 2 per day)"""
     today_start = datetime.combine(date.today(), datetime.min.time())
-    tomorrow_start = today_start + timedelta(days=1)
+    tomorrow_start = datetime.combine(date.today().replace(day=date.today().day + 1) if date.today().day < 28 else date.today().replace(month=date.today().month + 1, day=1) if date.today().month < 12 else date.today().replace(year=date.today().year + 1, month=1, day=1), datetime.min.time())
     
     # Count emails sent today
     emails_today = EmailRateLimit.query.filter(
-        EmailRateLimit.email == email,
-        EmailRateLimit.timestamp >= today_start,
-        EmailRateLimit.timestamp < tomorrow_start
+        EmailRateLimit.email == email  # type: ignore
+    ).filter(
+        EmailRateLimit.timestamp >= today_start  # type: ignore
+    ).filter(
+        EmailRateLimit.timestamp < tomorrow_start  # type: ignore
     ).count()
     
     return (emails_today < Config.EMAIL_RATE_LIMIT_PER_DAY) or current_app.debug

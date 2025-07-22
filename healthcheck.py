@@ -15,10 +15,14 @@ Usage:
 import sys
 try:
     import requests
+except ImportError:
+    print("❌ requests module not found. Please install it with 'pip install requests'")
+    sys.exit(1)
+from typing import Literal
 import json
 from datetime import datetime
 
-def run_healthcheck(base_url="http://127.0.0.1:8000"):
+def run_healthcheck(base_url="http://127.0.0.1:8000") -> Literal[0, 1, 2, 3, 4, 5, 6, 7]:
     """Run comprehensive health check against the SAY Backend"""
     
     print(f"🏥 Running SAY Backend Health Check")
