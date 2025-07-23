@@ -11,7 +11,7 @@ from ..database import db
 from ..models.email import EmailSubscriber, EmailRateLimit
 from ..mail.emailmanager import SMTPManager
 from ..config import Config
-
+from ..discord import discord_notifier
 email_subscription_bp = Blueprint('email_subscription', __name__)
 
 ACTUALLY_SEND_EMAIL = not getenv("NO_EMAIL") # If NO_EMAIL is set, emails will not be sent
@@ -87,8 +87,28 @@ def send_confirmation_email(email: str, subscriber: EmailSubscriber):
         
         record_email_sent(email)
         
+        # Send success notification to Discord
+        discord_notifier.send_diagnostic(
+            level="info",
+            service="Email Service",
+            message=f"Confirmation email sent successfully",
+            details={
+                "Recipient": email,
+                "Type": "New Subscriber Confirmation",
+                "Confirmation Code": subscriber.confirmation_code[:8] + "..."  # Only show first 8 chars for security
+            }
+        )
+        
     except Exception as e:
         print(f"Error sending email: {e}")
+        
+        # Send error notification to Discord
+        discord_notifier.send_error_notification(
+            service="Email Service",
+            error=e,
+            context=f"Failed to send confirmation email to {email}"
+        )
+        
         raise
 
 @email_subscription_bp.route('/subscribe', methods=['POST'])
@@ -118,6 +138,18 @@ def subscribe():
 
     # Check rate limit
     if not can_send_email(email):
+        # Send rate limit notification to Discord
+        discord_notifier.send_diagnostic(
+            level="warning",
+            service="Email Service",
+            message="Email subscription rate limit exceeded",
+            details={
+                "Email": email,
+                "Action": "Subscribe Request Blocked",
+                "Limit": "2 emails per day"
+            }
+        )
+        
         return jsonify({
             "success": False,
             "error": "Rate limit exceeded",
@@ -164,6 +196,19 @@ def subscribe():
         # Send confirmation email to new subscriber
         send_confirmation_email(email, subscriber)
         
+        # Send new subscriber notification to Discord
+        discord_notifier.send_embed(
+            title="📧 New Email Subscriber",
+            description="A new user has subscribed to the email newsletter",
+            color=0x00ff00,  # Green
+            fields=[
+                {"name": "Email", "value": email, "inline": True},
+                {"name": "Status", "value": "Pending Confirmation", "inline": True},
+                {"name": "Action", "value": "Confirmation Email Sent", "inline": True}
+            ],
+            footer={"text": "SAY Website Backend • Email Service"}
+        )
+        
         return jsonify({
             "success": True,
             "message": "Subscription Successful. We've sent you a confirmation email. (You might need to check your spam folder)",
@@ -173,6 +218,14 @@ def subscribe():
         
     except Exception as e:
         db.session.rollback()
+        
+        # Send error notification to Discord 
+        discord_notifier.send_error_notification(
+            service="Email Service",
+            error=e,
+            context=f"Failed to process new subscription for {email}"
+        )
+        
         return jsonify({
             "success": False,
             "error": str(e),
@@ -212,6 +265,19 @@ def confirm():
     subscriber.confirm()
     db.session.commit()
     
+    # Send confirmation success notification to Discord
+    discord_notifier.send_embed(
+        title="✅ Email Confirmation Successful",
+        description="A user has successfully confirmed their email subscription",
+        color=0x00ff00,  # Green
+        fields=[
+            {"name": "Email", "value": subscriber.email, "inline": True},
+            {"name": "Status", "value": "Confirmed ✅", "inline": True},
+            {"name": "Confirmation Code", "value": code[:8] + "...", "inline": True}
+        ],
+        footer={"text": "SAY Website Backend • Email Service"}
+    )
+    
     return jsonify({
         "success": True,
         "message": "Email confirmed successfully",
@@ -219,5 +285,7 @@ def confirm():
         "status": "confirmed"
     }), 200
 
-# a good cURL command to send subscribe damien@alphagame.dev would be:
-# curl -X POST -H "Content-Type: application/json" -d '{"email": "damien@alphagame.dev"}' http://localhost:8000/api/subscribe
+# Testing commands:
+# Subscribe: curl -X POST -H "Content-Type: application/json" -d '{"email": "damien@alphagame.dev"}' http://localhost:8000/api/subscribe
+# Form Submit: curl -X POST -d "email=damien@alphagame.dev" http://localhost:8000/api/subscribe
+# Confirm: curl http://localhost:8000/api/confirm?code=CONFIRMATION_CODE_HERE
