@@ -451,7 +451,7 @@ class DiscordNotificationManager:
         fields = [
             {'name': 'Service', 'value': service, 'inline': True},
             {'name': 'Level', 'value': level.upper(), 'inline': True},
-            {'name': 'Timestamp', 'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC'), 'inline': True}
+            {'name': 'Timestamp', 'value': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC'), 'inline': True}
         ]
         
         # Add details as fields if provided
