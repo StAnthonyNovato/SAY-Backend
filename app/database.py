@@ -4,9 +4,34 @@
 # https://opensource.org/licenses/MIT
 
 from flask_sqlalchemy import SQLAlchemy
+from contextlib import contextmanager
+from functools import wraps
 
 # Initialize SQLAlchemy
 db = SQLAlchemy()
+
+@contextmanager
+def auto_commit():
+    """Context manager for auto-committing database operations"""
+    try:
+        yield db.session
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        raise e
+
+def auto_commit_decorator(func):
+    """Decorator to auto-commit database operations"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            result = func(*args, **kwargs)
+            db.session.commit()
+            return result
+        except Exception as e:
+            db.session.rollback()
+            raise e
+    return wrapper
 
 def init_db(app):
     """Initialize database with Flask app"""

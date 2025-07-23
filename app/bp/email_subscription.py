@@ -7,7 +7,7 @@ from flask import Blueprint, request, current_app, jsonify
 from os import getenv, path
 from datetime import datetime, date
 from sqlalchemy import and_
-from ..database import db
+from ..database import db, auto_commit, auto_commit_decorator
 from ..models.email import EmailSubscriber, EmailRateLimit
 from ..mail.emailmanager import SMTPManager
 from ..config import Config
@@ -43,11 +43,12 @@ def can_send_email(email: str) -> bool:
     
     return (emails_today < Config.EMAIL_RATE_LIMIT_PER_DAY) or current_app.debug
 
+@auto_commit_decorator
 def record_email_sent(email: str):
     """Record that an email was sent to this address"""
     rate_limit_record = EmailRateLimit(email=email)
     db.session.add(rate_limit_record)
-    db.session.commit()
+    # Auto-commit decorator will handle the commit
 
 def send_confirmation_email(email: str, subscriber: EmailSubscriber):
     if not ACTUALLY_SEND_EMAIL:
@@ -190,8 +191,9 @@ def subscribe():
     subscriber = EmailSubscriber(email=email)
     
     try:
-        db.session.add(subscriber)
-        db.session.commit()
+        with auto_commit():
+            db.session.add(subscriber)
+            # Auto-commit context manager will handle the commit
         
         # Send confirmation email to new subscriber
         send_confirmation_email(email, subscriber)
@@ -217,7 +219,7 @@ def subscribe():
         }), 200
         
     except Exception as e:
-        db.session.rollback()
+        # Auto-commit context manager handles rollback automatically
         
         # Send error notification to Discord 
         discord_notifier.send_error_notification(
@@ -262,8 +264,9 @@ def confirm():
         }), 200
     
     # Confirm the subscriber
-    subscriber.confirm()
-    db.session.commit()
+    with auto_commit():
+        subscriber.confirm()
+        # Auto-commit context manager will handle this
     
     # Send confirmation success notification to Discord
     discord_notifier.send_embed(
@@ -289,3 +292,8 @@ def confirm():
 # Subscribe: curl -X POST -H "Content-Type: application/json" -d '{"email": "damien@alphagame.dev"}' http://localhost:8000/api/subscribe
 # Form Submit: curl -X POST -d "email=damien@alphagame.dev" http://localhost:8000/api/subscribe
 # Confirm: curl http://localhost:8000/api/confirm?code=CONFIRMATION_CODE_HERE
+
+# Note: This module uses SQLAlchemy auto-commit patterns:
+# - @auto_commit_decorator: Automatically commits after function execution
+# - auto_commit() context manager: Automatically commits when context exits
+# - Both handle rollback on exceptions automatically
