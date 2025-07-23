@@ -9,6 +9,7 @@ from json import load, dump
 from uuid import uuid4
 from datetime import datetime, date
 from ..mail.emailmanager import SMTPManager
+from ..discord import discord_notifier
 from constants import JSON_DUMP_OPTIONS
 
 email_subscription_bp = Blueprint('email_subscription', __name__)
@@ -106,8 +107,28 @@ def send_confirmation_email(email: str, user: dict):
         
         record_email_sent(email)
         
+        # Send success notification to Discord
+        discord_notifier.send_diagnostic(
+            level="info",
+            service="Email Service",
+            message=f"Confirmation email sent successfully",
+            details={
+                "Recipient": email,
+                "Type": "New Subscriber Confirmation",
+                "Confirmation Code": user['confirmation_code'][:8] + "..."  # Only show first 8 chars for security
+            }
+        )
+        
     except Exception as e:
         print(f"Error sending email: {e}")
+        
+        # Send error notification to Discord
+        discord_notifier.send_error_notification(
+            service="Email Service",
+            error=e,
+            context=f"Failed to send confirmation email to {email}"
+        )
+        
         raise
 
 @email_subscription_bp.route('/subscribe', methods=['POST'])
@@ -139,6 +160,18 @@ def subscribe():
 
     # Check rate limit
     if not can_send_email(email):
+        # Send rate limit notification to Discord
+        discord_notifier.send_diagnostic(
+            level="warning",
+            service="Email Service",
+            message="Email subscription rate limit exceeded",
+            details={
+                "Email": email,
+                "Action": "Subscribe Request Blocked",
+                "Limit": "2 emails per day"
+            }
+        )
+        
         return jsonify({
             "success": False,
             "error": "Rate limit exceeded",
@@ -188,6 +221,20 @@ def subscribe():
     # Send confirmation email to new subscriber
     try:
         send_confirmation_email(email, user)
+        
+        # Send new subscriber notification to Discord
+        discord_notifier.send_embed(
+            title="📧 New Email Subscriber",
+            description="A new user has subscribed to the email newsletter",
+            color=0x00ff00,  # Green
+            fields=[
+                {"name": "Email", "value": email, "inline": True},
+                {"name": "Status", "value": "Pending Confirmation", "inline": True},
+                {"name": "Action", "value": "Confirmation Email Sent", "inline": True}
+            ],
+            footer={"text": "SAY Website Backend • Email Service"}
+        )
+        
         return jsonify({
             "success": True,
             "message": "Subscription Successful.  We've sent you a confirmation email. (You might need to check your spam folder)",
@@ -195,6 +242,13 @@ def subscribe():
             "action": "subscribed"
         }), 200
     except Exception as e:
+        # Send error notification to Discord 
+        discord_notifier.send_error_notification(
+            service="Email Service",
+            error=e,
+            context=f"Failed to process new subscription for {email}"
+        )
+        
         return jsonify({
             "success": False,
             "error": str(e),
@@ -227,6 +281,20 @@ def confirm():
             user['confirmed'] = True
             with open("email-subscribers.json", "w") as file:
                 dump(SUBSCRIBERS_DATA, file, indent=JSON_DUMP_OPTIONS["indent"])
+            
+            # Send confirmation success notification to Discord
+            discord_notifier.send_embed(
+                title="✅ Email Confirmation Successful",
+                description="A user has successfully confirmed their email subscription",
+                color=0x00ff00,  # Green
+                fields=[
+                    {"name": "Email", "value": user["email"], "inline": True},
+                    {"name": "Status", "value": "Confirmed ✅", "inline": True},
+                    {"name": "Confirmation Code", "value": code[:8] + "...", "inline": True}
+                ],
+                footer={"text": "SAY Website Backend • Email Service"}
+            )
+            
             return jsonify({
                 "success": True,
                 "message": "Email confirmed successfully",
