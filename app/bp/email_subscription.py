@@ -5,7 +5,7 @@
 
 from flask import Blueprint, request, current_app, jsonify
 from os import getenv, path
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from sqlalchemy import and_
 from ..database import db, auto_commit, auto_commit_decorator
 from ..models.email import EmailSubscriber, EmailRateLimit
