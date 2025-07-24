@@ -13,6 +13,7 @@ import requests
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from dhooks import Webhook, Embed
+from datetime import timezone
 
 # Configure logging
 logger = logging.getLogger(__name__)
