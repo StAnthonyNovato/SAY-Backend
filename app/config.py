@@ -10,11 +10,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
-    # Database Configuration
-    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///dev.db")
-    SQLALCHEMY_DATABASE_URI = DATABASE_URL
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    
     # Email Configuration
     GOOGLE_APP_PASSWORD = os.getenv("GOOGLE_APP_PASSWORD")
     EMAIL = os.getenv("EMAIL", "stanthonyyouth.noreply@gmail.com")

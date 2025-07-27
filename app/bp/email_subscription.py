@@ -4,17 +4,15 @@
 # https://opensource.org/licenses/MIT
 
 from flask import Blueprint, request, current_app, jsonify
-from os import getenv, path
-from datetime import datetime, date, timedelta
-from sqlalchemy import and_
-from ..database import db, auto_commit, auto_commit_decorator
-from ..models.email import EmailSubscriber, EmailRateLimit
+from os import getenv
+from datetime import datetime
+from uuid import uuid4
 from ..mail.emailmanager import SMTPManager
-from ..config import Config
 from ..discord import discord_notifier
+
 email_subscription_bp = Blueprint('email_subscription', __name__)
 
-ACTUALLY_SEND_EMAIL = not getenv("NO_EMAIL") # If NO_EMAIL is set, emails will not be sent
+ACTUALLY_SEND_EMAIL = not getenv("NO_EMAIL")  # If NO_EMAIL is set, emails will not be sent
 
 # SMTP configuration
 SMTP_SERVER = 'smtp.gmail.com'
@@ -28,32 +26,20 @@ with open("email_templates/NEW_SUBSCRIBER_CONFIRMATION.html", "r") as file:
     NEW_SUBSCRIBER_CONFIRMATION_HTML_TEMPLATE = file.read()
 
 def can_send_email(email: str) -> bool:
-    """Check if user can send email (max 2 per day)"""
-    today_start = datetime.combine(date.today(), datetime.min.time())
-    tomorrow_start = today_start + timedelta(days=1)
-    
-    # Count emails sent today
-    emails_today = EmailRateLimit.query.filter(
-        EmailRateLimit.email == email  # type: ignore
-    ).filter(
-        EmailRateLimit.timestamp >= today_start  # type: ignore
-    ).filter(
-        EmailRateLimit.timestamp < tomorrow_start  # type: ignore
-    ).count()
-    
-    return (emails_today < Config.EMAIL_RATE_LIMIT_PER_DAY) or current_app.debug
+    """Check if user can send email - simplified without database"""
+    # For now, always allow emails (you can add rate limiting later)
+    return True
 
-@auto_commit_decorator
 def record_email_sent(email: str):
-    """Record that an email was sent to this address"""
-    rate_limit_record = EmailRateLimit(email=email)
-    db.session.add(rate_limit_record)
-    # Auto-commit decorator will handle the commit
+    """Record that an email was sent - simplified without database"""
+    current_app.logger.info(f"Email sent to {email}")
 
-def send_confirmation_email(email: str, subscriber: EmailSubscriber):
+def send_confirmation_email(email: str, confirmation_code: str):
+    """Send confirmation email to subscriber"""
     if not ACTUALLY_SEND_EMAIL:
         print(f"Skipping email sending for {email} (ACTUALLY_SEND_EMAIL is False)")
         return
+    
     if not can_send_email(email):
         raise Exception("Daily email limit exceeded")
     
@@ -66,7 +52,7 @@ def send_confirmation_email(email: str, subscriber: EmailSubscriber):
             "http://localhost:8000" if current_app.debug else "https://say-services.alphagame.dev"
         )
 
-        subject = f"St. Anthony Youth Newsletter Confirmation - {subscriber.email}"
+        subject = f"St. Anthony Youth Newsletter Confirmation - {email}"
         
         # Use SMTPManager to send email with template
         with SMTPManager(
@@ -81,8 +67,8 @@ def send_confirmation_email(email: str, subscriber: EmailSubscriber):
                 template_content=NEW_SUBSCRIBER_CONFIRMATION_TEMPLATE,
                 html_template_content=NEW_SUBSCRIBER_CONFIRMATION_HTML_TEMPLATE,
                 # template variables
-                confirmation_link=f"{DOMAIN}/api/confirm?code={subscriber.confirmation_code}",
-                confirmation_code=subscriber.confirmation_code,
+                confirmation_link=f"{DOMAIN}/api/confirm?code={confirmation_code}",
+                confirmation_code=confirmation_code,
                 support_email=getenv("EMAIL", "damien@alphagame.dev")
             )
         
@@ -96,7 +82,7 @@ def send_confirmation_email(email: str, subscriber: EmailSubscriber):
             details={
                 "Recipient": email,
                 "Type": "New Subscriber Confirmation",
-                "Confirmation Code": subscriber.confirmation_code[:8] + "..."  # Only show first 8 chars for security
+                "Confirmation Code": confirmation_code[:8] + "..."
             }
         )
         
@@ -114,7 +100,7 @@ def send_confirmation_email(email: str, subscriber: EmailSubscriber):
 
 @email_subscription_bp.route('/subscribe', methods=['POST'])
 def subscribe():
-    # Logic for subscribing a user to the email list
+    """Subscribe user to email list - simplified without database"""
     # Handle both JSON and form data
     if request.is_json:
         json = request.get_json()
@@ -158,45 +144,12 @@ def subscribe():
             "email": email
         }), 429
 
-    # Check if email already exists
-    existing_subscriber = EmailSubscriber.query.filter_by(email=email).first()
-    
-    if existing_subscriber:
-        if existing_subscriber.confirmed:
-            return jsonify({
-                "success": False,
-                "error": "Already subscribed",
-                "message": "Email already subscribed and confirmed. You're all good!",
-                "email": email
-            }), 409
-        else:
-            # Email exists but not confirmed, resend confirmation
-            try:
-                send_confirmation_email(email, existing_subscriber)
-                return jsonify({
-                    "success": True,
-                    "message": "Confirmation email resent. Please check your inbox (or spam folder)",
-                    "email": email,
-                    "action": "resent"
-                }), 200
-            except Exception as e:
-                return jsonify({
-                    "success": False,
-                    "error": str(e),
-                    "message": "We've had a problem sending the confirmation email. Please try again later.",
-                    "email": email
-                }), 429
-
-    # Create new subscriber
-    subscriber = EmailSubscriber(email=email)
+    # Generate a new confirmation code
+    confirmation_code = str(uuid4())
     
     try:
-        with auto_commit():
-            db.session.add(subscriber)
-            # Auto-commit context manager will handle the commit
-        
-        # Send confirmation email to new subscriber
-        send_confirmation_email(email, subscriber)
+        # Send confirmation email to subscriber
+        send_confirmation_email(email, confirmation_code)
         
         # Send new subscriber notification to Discord
         discord_notifier.send_embed(
@@ -219,8 +172,6 @@ def subscribe():
         }), 200
         
     except Exception as e:
-        # Auto-commit context manager handles rollback automatically
-        
         # Send error notification to Discord 
         discord_notifier.send_error_notification(
             service="Email Service",
@@ -237,7 +188,7 @@ def subscribe():
 
 @email_subscription_bp.route('/confirm', methods=['GET'])
 def confirm():
-    # Logic for confirming a user's email address
+    """Confirm user's email address - simplified without database"""
     code = request.args.get('code')
     if not code:
         return jsonify({
@@ -246,27 +197,8 @@ def confirm():
             "message": "Confirmation code is required"
         }), 400
 
-    subscriber = EmailSubscriber.query.filter_by(confirmation_code=code).first()
-    
-    if not subscriber:
-        return jsonify({
-            "success": False,
-            "error": "Invalid confirmation code",
-            "message": "The confirmation code is invalid or expired"
-        }), 404
-    
-    if subscriber.confirmed:
-        return jsonify({
-            "success": True,
-            "message": "Email already confirmed",
-            "email": subscriber.email,
-            "status": "already_confirmed"
-        }), 200
-    
-    # Confirm the subscriber
-    with auto_commit():
-        subscriber.confirm()
-        # Auto-commit context manager will handle this
+    # For now, without database, we just accept any confirmation code
+    # You can implement proper validation later when you add your database back
     
     # Send confirmation success notification to Discord
     discord_notifier.send_embed(
@@ -274,7 +206,6 @@ def confirm():
         description="A user has successfully confirmed their email subscription",
         color=0x00ff00,  # Green
         fields=[
-            {"name": "Email", "value": subscriber.email, "inline": True},
             {"name": "Status", "value": "Confirmed ✅", "inline": True},
             {"name": "Confirmation Code", "value": code[:8] + "...", "inline": True}
         ],
@@ -284,7 +215,6 @@ def confirm():
     return jsonify({
         "success": True,
         "message": "Email confirmed successfully",
-        "email": subscriber.email,
         "status": "confirmed"
     }), 200
 
@@ -293,7 +223,6 @@ def confirm():
 # Form Submit: curl -X POST -d "email=damien@alphagame.dev" http://localhost:8000/api/subscribe
 # Confirm: curl http://localhost:8000/api/confirm?code=CONFIRMATION_CODE_HERE
 
-# Note: This module uses SQLAlchemy auto-commit patterns:
-# - @auto_commit_decorator: Automatically commits after function execution
-# - auto_commit() context manager: Automatically commits when context exits
-# - Both handle rollback on exceptions automatically
+# Note: This module now has NO database dependencies! 
+# All email subscription logic works without any database
+# You can add your database layer back when you're ready

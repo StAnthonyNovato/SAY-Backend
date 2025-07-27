@@ -58,16 +58,11 @@ for logger in all_loggers:
 
 from .bp.email_subscription import email_subscription_bp
 from .discord import discord_notifier
-from .config import Config
-from .database import db, init_db
 from .bp.healthcheck import bp_healthcheck
 
 app = Flask(__name__)
-app.config.from_object(Config)
 app.debug = app.debug or (getenv("FLASK_DEBUG", False) != False or getenv("FLASK_ENV", False) == "development")
 
-# Initialize database
-init_db(app)
 
 CORS(app, resources = {
     "/*": {

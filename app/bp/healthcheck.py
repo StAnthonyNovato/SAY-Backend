@@ -5,191 +5,130 @@
 
 from flask import Blueprint, current_app, jsonify
 from datetime import datetime
-from ..models.email import EmailSubscriber, EmailRateLimit
 from ..version import __version__
 import os
 
 bp_healthcheck = Blueprint('healthcheck', __name__)
+
 @bp_healthcheck.route("/api/health")
 @bp_healthcheck.route("/api/healthcheck")
 @bp_healthcheck.route("/health")
 @bp_healthcheck.route("/healthcheck")
 def health():
-    """Comprehensive health check for all system components"""
+    """Comprehensive health check for all system components - simplified without database"""
     
     health_status = {
         "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "checks": {},
+        "timestamp": datetime.utcnow().isoformat() + "Z",
         "version": __version__,
+        "checks": {},
         "environment": "development" if current_app.debug else "production"
     }
     
     overall_healthy = True
     
-    # Database connectivity check
+    # Database connectivity check - simplified
+    health_status["checks"]["database"] = {
+        "status": "not_configured",
+        "message": "Database removed for clean rebuild",
+        "details": {
+            "note": "Database layer will be implemented from scratch"
+        }
+    }
+    
+    # Email service check
     try:
-        # Test database connection by doing a simple query
-        subscriber_count = EmailSubscriber.query.count()
-        rate_limit_count = EmailRateLimit.query.count()
+        smtp_password = os.getenv("GOOGLE_APP_PASSWORD")
+        email_configured = bool(smtp_password)
         
-        health_status["checks"]["database"] = {
-            "status": "healthy",
-            "message": "Database connection successful",
+        health_status["checks"]["email"] = {
+            "status": "healthy" if email_configured else "degraded",
+            "message": "Email service configured" if email_configured else "Email service not fully configured",
             "details": {
-                "subscribers_count": subscriber_count,
-                "rate_limits_count": rate_limit_count,
-                "database_url": current_app.config.get('SQLALCHEMY_DATABASE_URI', '').split('://')[0] + "://***"
+                "smtp_configured": email_configured,
+                "from_email": os.getenv("EMAIL", "not_set"),
+                "email_sending_enabled": not bool(os.getenv("NO_EMAIL"))
             }
         }
+        
+        if not email_configured:
+            overall_healthy = False
+            
     except Exception as e:
         overall_healthy = False
-        health_status["checks"]["database"] = {
+        health_status["checks"]["email"] = {
             "status": "unhealthy",
-            "message": f"Database connection failed: {str(e)}",
+            "message": f"Email service check failed: {str(e)}",
             "details": {}
         }
     
-    # Email configuration check
+    # Discord notifications check
     try:
-        smtp_password = os.getenv("GOOGLE_APP_PASSWORD")
-        email_address = os.getenv("EMAIL", "stanthonyyouth.noreply@gmail.com")
+        discord_webhook = os.getenv("DISCORD_WEBHOOK_URL")
+        discord_configured = bool(discord_webhook)
         
-        if smtp_password:
-            health_status["checks"]["email_config"] = {
-                "status": "healthy",
-                "message": "Email configuration present",
-                "details": {
-                    "smtp_configured": True,
-                    "email_address": email_address,
-                    "actually_send_email": not os.getenv("NO_EMAIL")
-                }
+        health_status["checks"]["discord"] = {
+            "status": "healthy" if discord_configured else "degraded",
+            "message": "Discord notifications configured" if discord_configured else "Discord notifications not configured",
+            "details": {
+                "webhook_configured": discord_configured
             }
-        else:
-            health_status["checks"]["email_config"] = {
-                "status": "warning",
-                "message": "SMTP password not configured",
-                "details": {
-                    "smtp_configured": False,
-                    "email_address": email_address,
-                    "actually_send_email": False
-                }
-            }
+        }
+        
     except Exception as e:
-        health_status["checks"]["email_config"] = {
-            "status": "unhealthy",
-            "message": f"Email configuration check failed: {str(e)}",
+        health_status["checks"]["discord"] = {
+            "status": "degraded",
+            "message": f"Discord check failed: {str(e)}",
             "details": {}
         }
     
     # Environment variables check
     try:
-        required_vars = ["DATABASE_URL", "EMAIL"]
-        optional_vars = ["GOOGLE_APP_PASSWORD", "NO_EMAIL", "EMAIL_RATE_LIMIT_PER_DAY"]
+        required_vars = ["EMAIL"]
+        optional_vars = ["GOOGLE_APP_PASSWORD", "DISCORD_WEBHOOK_URL"]
         
-        env_status = {}
-        missing_required = []
+        missing_required = [var for var in required_vars if not os.getenv(var)]
+        missing_optional = [var for var in optional_vars if not os.getenv(var)]
         
-        for var in required_vars:
-            if os.getenv(var):
-                env_status[var] = "present"
-            else:
-                env_status[var] = "missing"
-                missing_required.append(var)
-        
-        for var in optional_vars:
-            env_status[var] = "present" if os.getenv(var) else "missing"
-        
+        env_status = "healthy"
         if missing_required:
-            health_status["checks"]["environment"] = {
-                "status": "warning",
-                "message": f"Missing required environment variables: {', '.join(missing_required)}",
-                "details": env_status
+            env_status = "unhealthy"
+            overall_healthy = False
+        elif missing_optional:
+            env_status = "degraded"
+        
+        health_status["checks"]["environment"] = {
+            "status": env_status,
+            "message": "Environment variables configured properly" if env_status == "healthy" else "Some environment variables missing",
+            "details": {
+                "missing_required": missing_required,
+                "missing_optional": missing_optional,
+                "all_required_present": len(missing_required) == 0
             }
-        else:
-            health_status["checks"]["environment"] = {
-                "status": "healthy",
-                "message": "All required environment variables present",
-                "details": env_status
-            }
+        }
+        
     except Exception as e:
+        overall_healthy = False
         health_status["checks"]["environment"] = {
             "status": "unhealthy",
             "message": f"Environment check failed: {str(e)}",
             "details": {}
         }
     
-    # Application configuration check
-    try:
-        config_status = {
-            "debug_mode": current_app.debug,
-            "testing": current_app.testing,
-            "rate_limit_per_day": current_app.config.get('EMAIL_RATE_LIMIT_PER_DAY', 2),
-            "secret_key_configured": bool(current_app.secret_key),
-            "sqlalchemy_track_modifications": current_app.config.get('SQLALCHEMY_TRACK_MODIFICATIONS', True)
-        }
-        
-        health_status["checks"]["application"] = {
-            "status": "healthy",
-            "message": "Application configuration loaded",
-            "details": config_status
-        }
-    except Exception as e:
-        overall_healthy = False
-        health_status["checks"]["application"] = {
-            "status": "unhealthy",
-            "message": f"Application configuration check failed: {str(e)}",
-            "details": {}
-        }
+    # Update overall status
+    health_status["status"] = "healthy" if overall_healthy else "unhealthy"
     
-    # API endpoints check
-    try:
-        from flask import url_for
-        endpoints = []
-        for rule in current_app.url_map.iter_rules():
-            if rule.endpoint != 'static':
-                methods = rule.methods or set()
-                filtered_methods = list(methods - {'HEAD', 'OPTIONS'}) if methods else []
-                endpoints.append({
-                    "endpoint": rule.endpoint,
-                    "methods": filtered_methods,
-                    "rule": str(rule)
-                })
-        
-        health_status["checks"]["api_endpoints"] = {
-            "status": "healthy",
-            "message": f"Found {len(endpoints)} API endpoints",
-            "details": {
-                "endpoint_count": len(endpoints),
-                "endpoints": endpoints[:10]  # Limit to first 10 for brevity
-            }
-        }
-    except Exception as e:
-        health_status["checks"]["api_endpoints"] = {
-            "status": "unhealthy",
-            "message": f"API endpoints check failed: {str(e)}",
-            "details": {}
-        }
-    
-    # Set overall status
-    unhealthy_checks = [check for check in health_status["checks"].values() if check["status"] == "unhealthy"]
-    warning_checks = [check for check in health_status["checks"].values() if check["status"] == "warning"]
-    
-    if unhealthy_checks:
-        health_status["status"] = "unhealthy"
-        status_code = 503
-    elif warning_checks:
-        health_status["status"] = "degraded"
-        status_code = 200
-    else:
-        health_status["status"] = "healthy"
-        status_code = 200
-    
-    health_status["summary"] = {
-        "total_checks": len(health_status["checks"]),
-        "healthy_checks": len([c for c in health_status["checks"].values() if c["status"] == "healthy"]),
-        "warning_checks": len(warning_checks),
-        "unhealthy_checks": len(unhealthy_checks)
-    }
+    # Return appropriate HTTP status code
+    status_code = 200 if overall_healthy else 503
     
     return jsonify(health_status), status_code
+
+@bp_healthcheck.route("/api/status")
+def status():
+    """Simple status endpoint"""
+    return jsonify({
+        "status": "operational",
+        "message": "SAY Website Backend is running",
+        "version": __version__,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }), 200
