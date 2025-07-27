@@ -89,9 +89,21 @@ else:
 @app.before_request
 def before_request():
     """Log incoming requests for diagnostic purposes."""
+
+    # Do we have the X-Forwarded-For header?
+    usingForwardedFor = False
+    if 'X-Forwarded-For' in request.headers:
+        # Use the first IP in the list (the original client IP)
+        request.remote_addr = request.headers['X-Forwarded-For'].split(',')[0].strip()
+        usingForwardedFor = True
+    else:
+        # Use the direct remote address
+        request.remote_addr = request.remote_addr or "Unknown"
+
+    warningDirectHit = "*(Warning: Direct hit to the server, or `X-Forwarded-For` header missing!)*" if not usingForwardedFor else ""
     if not app.debug:
         discord_notifier.send_plaintext(
-            message = f"**[Request]** {request.method} {request.path} from {request.remote_addr}",
+            message = f"**[Request]** {request.method} {request.path} from {request.remote_addr} {warningDirectHit}",
             username = "Request Logger Subsystem",
         )
 
