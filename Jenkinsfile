@@ -23,6 +23,9 @@ pipeline {
             steps {
                 sshagent(['stanthonyyouth-server']) {
                     sh '''
+                        # Add remote host to known_hosts
+                        ssh-keyscan -H ${REMOTE_HOST} >> ~/.ssh/known_hosts
+
                         ssh ${REMOTE_USER}@${REMOTE_HOST} " \
                             sudo /bin/systemctl stop say-backend.service
                         "
@@ -43,7 +46,7 @@ pipeline {
                         
                         python3 -m pip install setuptools-scm
                         python3 -c "import setuptools_scm; print(setuptools_scm.get_version())" > version.txt
-                        
+
                         # Rsync files to remote host
                         rsync -avz --delete \
                             --exclude='.git' \
@@ -62,6 +65,9 @@ pipeline {
                 sshagent(['stanthonyyouth-server']) { 
                     sh '''
                         ssh ${REMOTE_USER}@${REMOTE_HOST} " \
+                            # Add remote host to known_hosts
+                            ssh-keyscan -H ${REMOTE_HOST} >> ~/.ssh/known_hosts
+                            
                             cd ${REMOTE_PATH} && \
                             rm -rf ${VENV_DIR} && \
 
@@ -78,6 +84,9 @@ pipeline {
             steps {
                 sshagent(['stanthonyyouth-server']) { 
                     sh '''
+                        # Add remote host to known_hosts
+                        ssh-keyscan -H ${REMOTE_HOST} >> ~/.ssh/known_hosts
+                        
                         ssh ${REMOTE_USER}@${REMOTE_HOST} " \
                             sudo /bin/systemctl restart say-backend.service
                         "
