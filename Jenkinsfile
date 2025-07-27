@@ -41,6 +41,9 @@ pipeline {
                         # Add remote host to known_hosts
                         ssh-keyscan -H ${REMOTE_HOST} >> ~/.ssh/known_hosts
                         
+                        python3 -m pip install setuptools-scm
+                        python3 -c "import setuptools_scm; print(setuptools_scm.get_version())" > version.txt
+                        
                         # Rsync files to remote host
                         rsync -avz --delete \
                             --exclude='.git' \
