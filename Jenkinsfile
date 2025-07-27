@@ -19,9 +19,20 @@ pipeline {
     }
     
     stages {
+        stage("Stop Service") {
+            steps {
+                sshagent(['stanthonyyouth-server']) {
+                    sh '''
+                        ssh ${REMOTE_USER}@${REMOTE_HOST} " \
+                            sudo /bin/systemctl stop say-backend.service
+                        "
+                    '''
+                }
+            }
+        }
         stage('Sync Files') {
             steps {
-                sshagent(['stanthonyyouth-server']) { // Replace with your SSH credentials ID
+                sshagent(['stanthonyyouth-server']) { 
                     sh '''
                         # Create SSH directory if it doesn't exist
                         mkdir -p ~/.ssh
@@ -45,7 +56,7 @@ pipeline {
 
         stage('Download Dependencies') {
             steps {
-                sshagent(['stanthonyyouth-server']) { // Replace with your SSH credentials ID
+                sshagent(['stanthonyyouth-server']) { 
                     sh '''
                         ssh ${REMOTE_USER}@${REMOTE_HOST} " \
                             cd ${REMOTE_PATH} && \
@@ -62,7 +73,7 @@ pipeline {
 
         stage('Restart Service') {
             steps {
-                sshagent(['stanthonyyouth-server']) { // Replace with your SSH credentials ID
+                sshagent(['stanthonyyouth-server']) { 
                     sh '''
                         ssh ${REMOTE_USER}@${REMOTE_HOST} " \
                             sudo /bin/systemctl restart say-backend.service
@@ -74,9 +85,11 @@ pipeline {
     }
     post {
         success {
+            sh 'curl -X POST -H "Content-Type: application/json" -d \'{"content": "Deployment completed successfully!"}\' https://discord.com/api/webhooks/1399052802872971305/rErIzvXkdDDwNQbAqFm8y08do6c4bZwwud1oJr2t4KUQvE7juaklVg0n2xezuPunMv_1'
             echo 'Deployment completed successfully!'
         }
         failure {
+            sh 'curl -X POST -H "Content-Type: application/json" -d \'{"content": "Deployment failed!"}\' https://discord.com/api/webhooks/1399052802872971305/rErIzvXkdDDwNQbAqFm8y08do6c4bZwwud1oJr2t4KUQvE7juaklVg0n2xezuPunMv_1'
             echo 'Deployment failed!'
         }
         cleanup {
