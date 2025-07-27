@@ -155,7 +155,6 @@ class SMTPManager:
         if not self.smtp_connection:
             if not self.connect():
                 raise Exception("Failed to establish SMTP connection")
-        print(html_content)
         try:
             h_From = f"St. Anthony Youth Mail Delivery Subsystem <{self.smtp_from_email}>"
             if html_content:
