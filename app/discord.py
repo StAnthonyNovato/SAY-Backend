@@ -166,7 +166,7 @@ class DiscordNotificationManager:
                 # Wait for a notification with timeout
                 try:
                     notification_data: Dict[str, Any] = self.notification_queue.get(timeout=1.0)
-                    logger.debug(f"Picked up notification: {notification_data['content'][:50] if 'content' in notification_data else f'<Embed data={notification_data.get("embeds", [])[:1]}>'}")  # Log first 50 chars
+                    logger.debug(f"Picked up notification from queue - {notification_data}")
                 except queue.Empty:
                     continue
                 
