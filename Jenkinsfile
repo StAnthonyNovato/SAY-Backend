@@ -23,6 +23,10 @@ pipeline {
             steps {
                 sshagent(['stanthonyyouth-server']) {
                     sh '''
+                        # Create SSH directory if it doesn't exist
+                        mkdir -p ~/.ssh
+                        chmod 700 ~/.ssh
+
                         # Add remote host to known_hosts
                         ssh-keyscan -H ${REMOTE_HOST} >> ~/.ssh/known_hosts
 
@@ -37,10 +41,6 @@ pipeline {
             steps {
                 sshagent(['stanthonyyouth-server']) { 
                     sh '''
-                        # Create SSH directory if it doesn't exist
-                        mkdir -p ~/.ssh
-                        chmod 700 ~/.ssh
-                        
                         # Add remote host to known_hosts
                         ssh-keyscan -H ${REMOTE_HOST} >> ~/.ssh/known_hosts
                         
@@ -86,7 +86,7 @@ pipeline {
                     sh '''
                         # Add remote host to known_hosts
                         ssh-keyscan -H ${REMOTE_HOST} >> ~/.ssh/known_hosts
-                        
+
                         ssh ${REMOTE_USER}@${REMOTE_HOST} " \
                             sudo /bin/systemctl restart say-backend.service
                         "
