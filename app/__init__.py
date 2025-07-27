@@ -5,20 +5,64 @@
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from .config import Config
-from .database import db, init_db
 import atexit
 import logging
+from os import getenv
 from datetime import datetime
-from .bp.email_subscription import email_subscription_bp
-from .discord import discord_notifier
+
+
+
+class MultiLineFormatter(logging.Formatter):
+    def format(self, record):
+        # Format the first line using the parent formatter
+        message = super().format(record)
+        
+        # If message contains newlines, handle each line separately
+        if "\n" in record.getMessage():
+            # Get the formatted first line to extract the prefix
+            first_line = message.split('\n')[0]
+            # Extract the prefix from the first line (everything before the actual message)
+            prefix = first_line[:first_line.find(record.getMessage())]
+            
+            # Format each line with the proper prefix
+            lines = []
+            for line in record.getMessage().splitlines():
+                # Create a new record with this line as the message
+                new_record = logging.LogRecord(
+                    record.name, record.levelno, record.pathname, 
+                    record.lineno, line, record.args, record.exc_info,
+                    func=record.funcName
+                )
+                # Format it with the parent formatter
+                formatted_line = super().format(new_record)
+                lines.append(formatted_line)
+                
+            return "\n".join(lines)
+        return message
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+level = (logging.DEBUG if getenv("FLASK_ENV") == "development" else logging.INFO)
+
+formatter = MultiLineFormatter('%(asctime)-21s %(levelname)-8s %(name)-12s | %(message)s', datefmt="%Y-%m-%d %H:%M:%S")
+handler = logging.StreamHandler()
+handler.setFormatter(formatter)
+
+logging.basicConfig(level=level, handlers=[handler])
+logger = logging.getLogger("app")
+
+# get a list of all initialized loggers
+all_loggers = [logging.getLogger(lgr) for lgr in logging.root.manager.loggerDict.keys() if lgr.startswith("app")]
+for logger in all_loggers:
+    logger.setLevel(level)
+
+from .bp.email_subscription import email_subscription_bp
+from .discord import discord_notifier
+from .config import Config
+from .database import db, init_db
 
 app = Flask(__name__)
 app.config.from_object(Config)
+app.debug = app.debug or (getenv("FLASK_DEBUG", False) != False or getenv("FLASK_ENV", False) == "development")
 
 # Initialize database
 init_db(app)
@@ -32,12 +76,24 @@ CORS(app, resources = {
 app.register_blueprint(email_subscription_bp, url_prefix='/api')
 
 # Send startup notification
-discord_notifier.send_startup_notification("SAY Website Backend")
+if not app.debug and getenv("FLASK_ENV") != "development":
+    discord_notifier.send_startup_notification("SAY Website Backend")
+
+if getenv("NO_EMAIL"):
+    logger.warning("Email functionality is disabled due to NO_EMAIL environment variable being set.")
+else:
+    logger.info("Email function is enabled.")
+    if not getenv("GOOGLE_APP_PASSWORD"):
+        logger.warning("* GOOGLE_APP_PASSWORD is not set.")
 
 @app.before_request
 def before_request():
     """Log incoming requests for diagnostic purposes."""
-    logger.info(f"Incoming {request.method} request to {request.path} from {request.remote_addr}")
+    if not app.debug:
+        discord_notifier.send_plaintext(
+            message = f"**[Request]** {request.method} {request.path} from {request.remote_addr}",
+            username = "Request Logger Subsystem",
+        )
 
 @app.errorhandler(500)
 def handle_internal_error(error):

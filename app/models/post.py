@@ -2,7 +2,7 @@
 # 
 # This software is released under the MIT License.
 # https://opensource.org/licenses/MIT
-
+from typing import Dict, Any
 class Post:
     """Represents a blog post, as defined by the Jekyll data structure."""
     raw: dict # not recommended to use directly, use properties instead
@@ -14,14 +14,14 @@ class Post:
     path: str
     url: str
     _id: str
-    next_post: dict | None
+    next_post: Dict[str, Any] | None
     categories: list
     excerpt: str
     relative_path: str
     date: str
     title: str
     tags: list
-    previous_post: dict | None
+    previous_post: Dict[str, Any] | None
     draft: bool
     author: str
     layout: str

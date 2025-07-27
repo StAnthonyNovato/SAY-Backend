@@ -121,6 +121,7 @@ class DiscordNotificationManager:
         Args:
             webhook_url: Discord webhook URL. If not provided, will try to get from environment.
         """
+        logger.info("Initializing Discord notification manager")
         self.webhook_url = webhook_url or os.getenv('DISCORD_WEBHOOK_URL')
         if not self.webhook_url:
             logger.warning("No Discord webhook URL provided. Notifications will be disabled.")
@@ -144,6 +145,7 @@ class DiscordNotificationManager:
         
     def _start_worker(self):
         """Start the worker thread if not already running."""
+        logger.debug("Attempting to start Discord notification worker thread")
         with self._worker_lock:
             if self._worker_thread is None or not self._worker_thread.is_alive():
                 self._stop_worker.clear()
@@ -153,7 +155,7 @@ class DiscordNotificationManager:
                     name="DiscordNotificationWorker"
                 )
                 self._worker_thread.start()
-                logger.info("Discord notification worker thread started")
+                logger.debug("Just started Discord notification worker thread - it should be running now")    
     
     def _worker_loop(self):
         """Main worker loop that processes notification queue."""
@@ -163,19 +165,22 @@ class DiscordNotificationManager:
             try:
                 # Wait for a notification with timeout
                 try:
-                    notification_data = self.notification_queue.get(timeout=1.0)
+                    notification_data: Dict[str, Any] = self.notification_queue.get(timeout=1.0)
+                    logger.debug(f"Picked up notification: {notification_data['content'][:50] if 'content' in notification_data else f'<Embed data={notification_data.get("embeds", [])[:1]}>'}")  # Log first 50 chars
                 except queue.Empty:
                     continue
                 
                 # Process the notification with rate limiting
                 success = self._send_notification_with_retry(**notification_data)
+
                 if not success:
                     logger.error("Failed to send notification after all retries")
-                
+                    # dump data
+                    logger.error(f"Notification data: {notification_data}")
                 self.notification_queue.task_done()
                 
             except Exception as e:
-                logger.error(f"Error in Discord notification worker: {e}")
+                logger.error(f"Error in Discord notification worker: {e}", exc_info=True)
                 
         logger.info("Discord notification worker stopped")
     
