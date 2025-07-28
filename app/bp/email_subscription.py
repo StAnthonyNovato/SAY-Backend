@@ -10,8 +10,79 @@ from uuid import uuid4
 from ..mail.emailmanager import SMTPManager
 from ..discord import discord_notifier
 import threading
+from enum import Enum
+from typing import Optional, Tuple
+from logging import getLogger
 
 email_subscription_bp = Blueprint('email_subscription', __name__)
+logger = getLogger(__name__)
+
+class EmailSubscriptionState(Enum):
+    """Enumeration of possible email subscription states"""
+    NEW_SUBSCRIPTION = "new_subscription"
+    ALREADY_CONFIRMED = "already_confirmed"
+    RESEND_CONFIRMATION = "resend_confirmation"
+    NOT_FOUND = "not_found"
+
+def determine_email_state(existing_subscription: Optional[Tuple]) -> EmailSubscriptionState:
+    """
+    Determine the state of an email subscription based on database query result.
+    
+    Args:
+        existing_subscription: Tuple from database query (id, email, confirmation_token, confirmed)
+                              or None if no subscription found
+    
+    Returns:
+        EmailSubscriptionState: The current state of the subscription
+    """
+    logger.debug("Determining email subscription state, given existing subscription: %s", existing_subscription)
+    if existing_subscription is None:
+        logger.debug("No existing subscription found, returning NEW_SUBSCRIPTION state")
+        return EmailSubscriptionState.NEW_SUBSCRIPTION
+    
+    # Extract the confirmed status (4th element in tuple)
+    subscription_id, existing_email, existing_token, is_confirmed = existing_subscription
+    
+    if is_confirmed:
+        logger.debug("Existing subscription is confirmed, returning ALREADY_CONFIRMED state")
+        return EmailSubscriptionState.ALREADY_CONFIRMED
+    else:
+        logger.debug("Existing subscription is not confirmed, returning RESEND_CONFIRMATION state")
+        return EmailSubscriptionState.RESEND_CONFIRMATION
+
+def send_subscription_discord_notification(email_state: EmailSubscriptionState, email: str):
+    """
+    Send appropriate Discord notification based on email subscription state.
+    
+    Args:
+        email_state: The current state of the email subscription
+        email: The email address being processed
+    """
+    if email_state == EmailSubscriptionState.NEW_SUBSCRIPTION:
+        discord_notifier.send_embed(
+            title="📧 New Email Subscriber",
+            description="A new user has subscribed to the email newsletter",
+            color=0x00ff00,  # Green
+            fields=[
+                {"name": "Email", "value": email, "inline": True},
+                {"name": "Status", "value": "Pending Confirmation", "inline": True},
+                {"name": "Action", "value": "New Subscription", "inline": True}
+            ],
+            footer={"text": "SAY Website Backend • Email Service"}
+        )
+        
+    elif email_state == EmailSubscriptionState.RESEND_CONFIRMATION:
+        discord_notifier.send_embed(
+            title="🔄 Confirmation Email Resent",
+            description="Resent confirmation email to existing unconfirmed subscriber",
+            color=0xffa500,  # Orange
+            fields=[
+                {"name": "Email", "value": email, "inline": True},
+                {"name": "Status", "value": "Still Pending Confirmation", "inline": True},
+                {"name": "Action", "value": "Resent Confirmation Email", "inline": True}
+            ],
+            footer={"text": "SAY Website Backend • Email Service"}
+        )
 
 ACTUALLY_SEND_EMAIL = not getenv("NO_EMAIL")  # If NO_EMAIL is set, emails will not be sent
 
@@ -197,6 +268,9 @@ def subscribe():
                 "content_type": request.content_type
             }), 400
 
+    # ^^ Yields `email` as a string
+
+
     # Check rate limit
     if not can_send_email(email):
         # Send rate limit notification to Discord
@@ -210,6 +284,7 @@ def subscribe():
                 "Limit": f"{RATE_LIMIT_EMAILS_PER_HOUR} emails per hour"
             }
         )
+
         response = jsonify({
             "success": False,
             "error": "Rate limit exceeded",
@@ -219,8 +294,6 @@ def subscribe():
         response.status_code = 429
         return response
 
-    # Generate a new confirmation code
-    confirmation_code = str(uuid4())
     
     cursor = g.cursor
     if cursor is None:
@@ -237,78 +310,57 @@ def subscribe():
                    """, (email,))
     existing_subscription = cursor.fetchone()
 
-    # Track what action we're taking for Discord notifications
-    action_type = None
+    # Determine the current state of this email subscription
+    email_state = determine_email_state(existing_subscription)
     
-    # Did we find an existing subscription?
-    if existing_subscription:
-        subscription_id, existing_email, existing_token, is_confirmed = existing_subscription
+    # Handle each state appropriately
+    if email_state == EmailSubscriptionState.ALREADY_CONFIRMED:
+        # User is already confirmed, no need to send another email
+        return jsonify({
+            "success": True,
+            "message": "You are already subscribed and confirmed!",
+            "email": email,
+            "action": email_state.value
+        }), 200
         
-        if is_confirmed:
-            # User is already confirmed, no need to send another email
-            return jsonify({
-                "success": True,
-                "message": "You are already subscribed and confirmed!",
-                "email": email,
-                "action": "already_confirmed"
-            }), 200
-        else:
-            # User exists but not confirmed, keep their existing confirmation token
-            confirmation_code = existing_token
-            action_type = "resend_confirmation"
-            current_app.logger.info(f"Resending confirmation email for existing unconfirmed user: {email}")
-    else:
+    elif email_state == EmailSubscriptionState.RESEND_CONFIRMATION:
+        # User exists but not confirmed, keep their existing confirmation token
+        subscription_id, existing_email, existing_token, is_confirmed = existing_subscription
+        confirmation_code = existing_token
+        current_app.logger.info(f"Resending confirmation email for existing unconfirmed user: {email}")
+        
+    elif email_state == EmailSubscriptionState.NEW_SUBSCRIPTION:
         # New user, insert into database
+        confirmation_code = str(uuid4())
         cursor.execute("""
             INSERT INTO newsletter (email, confirmation_token)
             VALUES (%s, %s)
         """, (email, confirmation_code))
-        action_type = "new_subscription"
         current_app.logger.info(f"Added new user to newsletter: {email}")
     
     try:
+        confirmation_code = existing_subscription[2]
         # Send confirmation email to subscriber
         send_confirmation_email(email, confirmation_code)
         
-        # Send appropriate Discord notification based on action type
-        if action_type == "new_subscription":
-            discord_notifier.send_embed(
-                title="📧 New Email Subscriber",
-                description="A new user has subscribed to the email newsletter",
-                color=0x00ff00,  # Green
-                fields=[
-                    {"name": "Email", "value": email, "inline": True},
-                    {"name": "Status", "value": "Pending Confirmation", "inline": True},
-                    {"name": "Action", "value": "New Subscription", "inline": True}
-                ],
-                footer={"text": "SAY Website Backend • Email Service"}
-            )
-            
+        # Send appropriate Discord notification based on email state
+        send_subscription_discord_notification(email_state, email)
+        
+        # Return appropriate response based on email state
+        if email_state == EmailSubscriptionState.NEW_SUBSCRIPTION:
             return jsonify({
                 "success": True,
                 "message": "Subscription successful! We've sent you a confirmation email. (You might need to check your spam folder)",
                 "email": email,
-                "action": "new_subscription"
+                "action": email_state.value
             }), 200
             
-        elif action_type == "resend_confirmation":
-            discord_notifier.send_embed(
-                title="🔄 Confirmation Email Resent",
-                description="Resent confirmation email to existing unconfirmed subscriber",
-                color=0xffa500,  # Orange
-                fields=[
-                    {"name": "Email", "value": email, "inline": True},
-                    {"name": "Status", "value": "Still Pending Confirmation", "inline": True},
-                    {"name": "Action", "value": "Resent Confirmation Email", "inline": True}
-                ],
-                footer={"text": "SAY Website Backend • Email Service"}
-            )
-            
+        elif email_state == EmailSubscriptionState.RESEND_CONFIRMATION:
             return jsonify({
                 "success": True,
                 "message": "We've resent your confirmation email. Please check your inbox (and spam folder).",
                 "email": email,
-                "action": "resend_confirmation"
+                "action": email_state.value
             }), 200
         
     except Exception as e:
@@ -316,7 +368,7 @@ def subscribe():
         discord_notifier.send_error_notification(
             service="Email Service",
             error=e,
-            context=f"Failed to process subscription for {email} (action: {action_type or 'unknown'})"
+            context=f"Failed to process subscription for {email} (action: {email_state.value if 'email_state' in locals() else 'unknown'})"
         )
         
         return jsonify({
@@ -356,12 +408,15 @@ def confirm():
     
     if not subscription:
         # Invalid confirmation code
+        v_code = code
+        if len(v_code) > 200:
+            v_code = code[:200] + "..."  # Truncate long codes for logging
         discord_notifier.send_diagnostic(
             level="warning",
             service="Email Service",
             message="Invalid confirmation code attempted",
             details={
-                "Confirmation Code": code[:8] + "...",
+                "Confirmation Code": code,
                 "Action": "Confirmation Failed"
             }
         )
@@ -417,11 +472,3 @@ def confirm():
 # Form Submit: curl -X POST -d "email=damien@alphagame.dev" http://localhost:8000/api/subscribe
 # Confirm: curl http://localhost:8000/api/confirm?code=CONFIRMATION_CODE_HERE
 # Rate limit debug: curl http://localhost:8000/api/rateLimitInternals (debug mode only)
-
-# Features implemented:
-# ✅ Full MySQL database integration with newsletter table
-# ✅ Rate limiting with in-memory storage
-# ✅ Duplicate email handling (existing confirmed vs unconfirmed users)
-# ✅ Proper confirmation token validation
-# ✅ Discord notifications for all events
-# ✅ Thread-safe operations

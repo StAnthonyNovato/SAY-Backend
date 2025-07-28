@@ -3,7 +3,7 @@
 # This software is released under the MIT License.
 # https://opensource.org/licenses/MIT
 
-from flask import Blueprint, current_app, jsonify
+from flask import Blueprint, current_app, jsonify, g
 from datetime import datetime
 from ..version import __version__
 import os
@@ -29,13 +29,29 @@ def health():
     
     # Database connectivity check - simplified
     health_status["checks"]["database"] = {
-        "status": "not_configured",
-        "message": "Database removed for clean rebuild",
-        "details": {
-            "note": "Database layer will be implemented from scratch"
-        }
+        "status": "unset",
+        "message": "Message not set",
+        "details": {}
     }
     
+    # MySQL connection check
+    cnx = g.cnx if hasattr(g, 'cnx') else None
+    if not cnx:
+        health_status["checks"]["database"]["status"] = "unhealthy"
+        health_status["checks"]["database"]["message"] = "MySQL connection not initialized"
+        overall_healthy = False
+    
+    else:
+        try:
+            cnx.ping(reconnect=True, attempts=3, delay=1)
+            health_status["checks"]["database"]["status"] = "healthy"
+            health_status["checks"]["database"]["message"] = "MySQL connection is healthy"
+        except Exception as e:
+            health_status["checks"]["database"]["status"] = "unhealthy"
+            health_status["checks"]["database"]["message"] = f"MySQL connection failed: {str(e)}"
+            overall_healthy = False
+
+
     # Email service check
     try:
         smtp_password = os.getenv("GOOGLE_APP_PASSWORD")
@@ -84,7 +100,7 @@ def health():
     
     # Environment variables check
     try:
-        required_vars = ["EMAIL"]
+        required_vars = ["SMTP_FROM_EMAIL", "GOOGLE_APP_PASSWORD"]
         optional_vars = ["GOOGLE_APP_PASSWORD", "DISCORD_WEBHOOK_URL"]
         
         missing_required = [var for var in required_vars if not os.getenv(var)]

@@ -13,15 +13,20 @@ from mysql.connector import (
     connect,
     Error as MySQLError,
     InterfaceError,
+    pooling,
     __version__ as mysql_version)
 from .config import MYSQL_CONNECTION_INFO
 from .utility import MultiLineFormatter
 from .version import __version__
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import g
+import faulthandler
+import threading
+import time
 
+faulthandler.enable()
 # Configure logging
-level = (logging.DEBUG if getenv("FLASK_ENV") == "development" else logging.INFO)
+level = (logging.DEBUG if getenv("FLASK_ENV") == "development" or getenv("DEBUG_LOGGING") != None else logging.INFO)
 
 formatter = MultiLineFormatter('%(asctime)-21s %(levelname)-8s %(name)-12s | %(message)s', datefmt="%Y-%m-%d %H:%M:%S")
 handler = logging.StreamHandler()
@@ -45,73 +50,122 @@ app.debug = app.debug or (getenv("FLASK_DEBUG", False) != False or getenv("FLASK
 logger.info("Using MySQL Connector/Python version: %s", mysql_version)
 logger.info("Connecting to MySQL database with config:")
 logger.info(f"* Host: {MYSQL_CONNECTION_INFO['host']}")
-logger.info(f"* User: {MYSQL_CONNECTION_INFO['user']}")
 logger.info(f"* Port: {MYSQL_CONNECTION_INFO['port']}")
 logger.info(f"* Database: {MYSQL_CONNECTION_INFO['database']}")
 
-cnx = connect(**MYSQL_CONNECTION_INFO)
+# Create a connection pool instead of a single connection
+pool_config = MYSQL_CONNECTION_INFO.copy()
+pool_config.update({
+    'pool_name': 'say_backend_pool',
+    'pool_size': 10,  # Maximum number of connections in the pool
+    'pool_reset_session': True,  # Reset session variables when connection is returned to pool
+    'autocommit': False,  # We'll handle commits manually
+    'connect_timeout': 30,  # Connection timeout
+    'use_unicode': True,
+    'charset': 'utf8mb4'
+})
 
-if cnx.is_connected():
-    logger.info("Successfully connected to the MySQL database.")
-else:
-    logger.error("Failed to connect to the MySQL database.")
-    # Exit the application if the database connection fails
+try:
+    cnx_pool = pooling.MySQLConnectionPool(**pool_config)
+    logger.info("Successfully created MySQL connection pool with %d connections", pool_config['pool_size'])
+except Exception as e:
+    logger.error(f"Failed to create MySQL connection pool: {e}")
     exit(1)
 
-cur = cnx.cursor()
-cur.execute("SELECT VERSION()")
-result = cur.fetchone()
-db_version = result[0] if result and isinstance(result, tuple) else "Unknown"
+# Test the pool with a single connection to verify database schema
+try:
+    test_cnx = cnx_pool.get_connection()
+    test_cur = test_cnx.cursor()
+    test_cur.execute("SELECT VERSION()")
+    result = test_cur.fetchone()
+    db_version = result[0] if result and isinstance(result, tuple) else "Unknown"
+    logger.info(f"MySQL database version: {db_version}")
+    
+    # Initialize database schema
+    with open("databaseSchema.sql", "r") as file:
+        schema_sql = file.read()
+        commands = schema_sql.split(';')
+        commands = [cmd.strip() for cmd in commands if cmd.strip()]  # Remove empty commands
+        for command in commands:
+            try:
+                test_cur.execute(command)
+            except MySQLError as e:
+                logger.error(f"Error executing command '{command}': {e}")
+        test_cnx.commit()
+        logger.info(f"Database schema initialized successfully. ({len(commands)} commands executed)")
+    
+    test_cur.close()
+    test_cnx.close()
+    
+except Exception as e:
+    logger.error(f"Failed to test database connection: {e}")
+    exit(1)
 
-logging.info(f"MySQL database version: {db_version}")
-
-
-with open("databaseSchema.sql", "r") as file:
-    schema_sql = file.read()
-    commands = schema_sql.split(';')
-    commands = [cmd.strip() for cmd in commands if cmd.strip()]  # Remove empty commands
-    for command in commands:
-        try:
-            cur.execute(command)
-        except MySQLError as e:
-            logger.error(f"Error executing command '{command}': {e}")
-    cnx.commit()
-    logger.info("Database schema initialized successfully.")
+# Connection health check tracking
+last_health_check = None
+health_check_interval = timedelta(minutes=5)  # Only check health every 5 minutes
+health_check_lock = threading.Lock()
 
 @app.before_request
 def add_contextual_cursor():
-    try:
-        cnx.ping(attempts=3, delay=1, reconnect=True)
-    except InterfaceError as e:
-        logger.warning("Failed to ping MySQL connection, reconnecting...")
-        try:
-            cnx.reconnect(attempts=3, delay=1)
-        except Exception as reconnect_error:
-            logger.error(f"Failed to reconnect to MySQL: {reconnect_error}")
-            # Don't fail the request, but log the issue
-            g.cursor = None
-            return
+    """Get a connection from the pool and create a cursor for this request."""
+    global last_health_check
     
     try:
-        g.cursor = cnx.cursor(buffered=True)
-    except Exception as cursor_error:
-        logger.error(f"Failed to create cursor: {cursor_error}")
+        # Get a connection from the pool
+        g.cnx = cnx_pool.get_connection()
+        
+        # Only do health checks periodically, not on every request
+        current_time = datetime.now()
+        should_check_health = False
+        
+        with health_check_lock:
+            if last_health_check is None or (current_time - last_health_check) > health_check_interval:
+                should_check_health = True
+                last_health_check = current_time
+        
+        # Perform health check only if needed
+        if should_check_health:
+            try:
+                g.cnx.ping(reconnect=True)
+                logger.debug("Database health check passed")
+            except Exception as ping_error:
+                logger.warning(f"Database ping failed, but continuing with fresh connection: {ping_error}")
+        
+        # Create cursor for this request
+        g.cursor = g.cnx.cursor(buffered=True)
+        
+    except Exception as e:
+        logger.error(f"Failed to get database connection from pool: {e}")
+        g.cnx = None
         g.cursor = None
 
 @app.teardown_request
 def teardown_request(exception):
-    """Close the database cursor after each request."""
+    """Close the database cursor and return connection to pool after each request."""
     cursor: MySQLCursor = g.pop('cursor', None)
+    cnx = g.pop('cnx', None)
+    
     if cursor is not None:
         try:
             cursor.close()
         except Exception as e:
             logger.warning(f"Error closing cursor: {e}")
     
-    try:
-        cnx.commit()
-    except Exception as e:
-        logger.warning(f"Error committing transaction: {e}")
+    if cnx is not None:
+        try:
+            if exception is None:
+                cnx.commit()  # Commit successful requests
+            else:
+                cnx.rollback()  # Rollback failed requests
+                logger.warning(f"Rolling back transaction due to exception: {exception}")
+        except Exception as e:
+            logger.warning(f"Error handling transaction: {e}")
+        finally:
+            try:
+                cnx.close()  # Return connection to pool
+            except Exception as e:
+                logger.warning(f"Error returning connection to pool: {e}")
 
 CORS(app, resources = {
     "/*": {
@@ -147,8 +201,11 @@ def before_request():
         # Use the direct remote address
         request.remote_addr = request.remote_addr or "Unknown"
 
-    warningDirectHit = "*(Warning: Direct hit to the server, or `X-Forwarded-For` header missing!)*" if not usingForwardedFor else ""
-    if not app.debug:
+    warningDirectHit = "\n-# (Warning: Direct hit to the server, or the `X-Forwarded-For` header is missing!)" if not usingForwardedFor else ""
+
+    # fcnl = From Client Not Logged
+    fcnl = not (request.args.get("fcnl") is None)
+    if not app.debug and not fcnl and request.method != "OPTIONS":
         discord_notifier.send_plaintext(
             message = f"**[Request]** {request.method} {request.path} from {request.remote_addr} {warningDirectHit}",
             username = "Request Logger Subsystem",
@@ -185,9 +242,17 @@ def index():
     """Health check endpoint."""
     return "All systems operational. API is running."
 
-# Register shutdown handler to gracefully close Discord notification system
+# Register shutdown handler to gracefully close Discord notification system and database pool
 @atexit.register
 def shutdown_handler():
-    """Gracefully shutdown the Discord notification system."""
+    """Gracefully shutdown the Discord notification system and database connection pool."""
     logger.info("Application shutting down, closing Discord notification system")
     discord_notifier.shutdown()
+    
+    # Close the connection pool
+    try:
+        # Note: mysql.connector.pooling doesn't have a direct close_all method,
+        # but connections will be closed when the pool object is garbage collected
+        logger.info("Database connection pool will be closed on application exit")
+    except Exception as e:
+        logger.warning(f"Error during connection pool shutdown: {e}")
