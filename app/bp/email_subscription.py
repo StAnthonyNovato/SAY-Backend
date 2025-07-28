@@ -3,7 +3,7 @@
 # This software is released under the MIT License.
 # https://opensource.org/licenses/MIT
 
-from flask import Blueprint, request, current_app, jsonify, g
+from flask import Blueprint, request, current_app, jsonify, g, Response
 from os import getenv
 from datetime import datetime, timedelta
 from uuid import uuid4
@@ -101,7 +101,7 @@ def send_confirmation_email(email: str, confirmation_code: str):
             raise Exception("SMTP_PASSWORD must be set in the environment variables")
         
         DOMAIN = (
-            "http://localhost:8000" if current_app.debug else "https://say-services.alphagame.dev"
+            "http://localhost:8000" if current_app.debug else "https://stanthonyyouth.alphagame.dev"
         )
 
         subject = f"St. Anthony Youth Newsletter Confirmation - {email}"
@@ -169,19 +169,22 @@ def rate_limit_internals():
             "rate_limit_cleanup_interval": RATE_LIMIT_CLEANUP_INTERVAL,
             "rate_limit_emails_per_hour": RATE_LIMIT_EMAILS_PER_HOUR
         }), 200
-@email_subscription_bp.route('/subscribe', methods=['POST'])
+    
+@email_subscription_bp.route('/subscribe', methods=['POST']) # pyright: ignore[reportArgumentType]
 def subscribe():
     """Subscribe user to email list - simplified without database"""
     # Handle both JSON and form data
     if request.is_json:
         json = request.get_json()
         if not json or 'email' not in json:
-            return jsonify({
+            response = jsonify({
                 "success": False,
                 "error": "Invalid request",
                 "message": "Email field is required",
                 "content_type": request.content_type
-            }), 400
+            })
+            response.status_code = 400
+            return response
         email = json['email']
     else:
         # Handle HTML form submission
@@ -207,47 +210,113 @@ def subscribe():
                 "Limit": f"{RATE_LIMIT_EMAILS_PER_HOUR} emails per hour"
             }
         )
-        
-        return jsonify({
+        response = jsonify({
             "success": False,
             "error": "Rate limit exceeded",
             "message": f"Rate limit exceeded. You can only send {RATE_LIMIT_EMAILS_PER_HOUR} emails per hour. Please try again later.",
             "email": email
-        }), 429
+        })
+        response.status_code = 429
+        return response
 
     # Generate a new confirmation code
     confirmation_code = str(uuid4())
+    
+    cursor = g.cursor
+    if cursor is None:
+        current_app.logger.error("No database cursor available")
+        return jsonify({
+            "success": False,
+            "error": "Database connection error",
+            "message": "Unable to process request at this time"
+        }), 500
+
+    # Check if user already exists in the database
+    cursor.execute("""
+                   SELECT id, email, confirmation_token, confirmed FROM newsletter WHERE email = %s
+                   """, (email,))
+    existing_subscription = cursor.fetchone()
+
+    # Track what action we're taking for Discord notifications
+    action_type = None
+    
+    # Did we find an existing subscription?
+    if existing_subscription:
+        subscription_id, existing_email, existing_token, is_confirmed = existing_subscription
+        
+        if is_confirmed:
+            # User is already confirmed, no need to send another email
+            return jsonify({
+                "success": True,
+                "message": "You are already subscribed and confirmed!",
+                "email": email,
+                "action": "already_confirmed"
+            }), 200
+        else:
+            # User exists but not confirmed, keep their existing confirmation token
+            confirmation_code = existing_token
+            action_type = "resend_confirmation"
+            current_app.logger.info(f"Resending confirmation email for existing unconfirmed user: {email}")
+    else:
+        # New user, insert into database
+        cursor.execute("""
+            INSERT INTO newsletter (email, confirmation_token)
+            VALUES (%s, %s)
+        """, (email, confirmation_code))
+        action_type = "new_subscription"
+        current_app.logger.info(f"Added new user to newsletter: {email}")
     
     try:
         # Send confirmation email to subscriber
         send_confirmation_email(email, confirmation_code)
         
-        # Send new subscriber notification to Discord
-        discord_notifier.send_embed(
-            title="📧 New Email Subscriber",
-            description="A new user has subscribed to the email newsletter",
-            color=0x00ff00,  # Green
-            fields=[
-                {"name": "Email", "value": email, "inline": True},
-                {"name": "Status", "value": "Pending Confirmation", "inline": True},
-                {"name": "Action", "value": "Confirmation Email Sent", "inline": True}
-            ],
-            footer={"text": "SAY Website Backend • Email Service"}
-        )
-        
-        return jsonify({
-            "success": True,
-            "message": "Subscription Successful. We've sent you a confirmation email. (You might need to check your spam folder)",
-            "email": email,
-            "action": "subscribed"
-        }), 200
+        # Send appropriate Discord notification based on action type
+        if action_type == "new_subscription":
+            discord_notifier.send_embed(
+                title="📧 New Email Subscriber",
+                description="A new user has subscribed to the email newsletter",
+                color=0x00ff00,  # Green
+                fields=[
+                    {"name": "Email", "value": email, "inline": True},
+                    {"name": "Status", "value": "Pending Confirmation", "inline": True},
+                    {"name": "Action", "value": "New Subscription", "inline": True}
+                ],
+                footer={"text": "SAY Website Backend • Email Service"}
+            )
+            
+            return jsonify({
+                "success": True,
+                "message": "Subscription successful! We've sent you a confirmation email. (You might need to check your spam folder)",
+                "email": email,
+                "action": "new_subscription"
+            }), 200
+            
+        elif action_type == "resend_confirmation":
+            discord_notifier.send_embed(
+                title="🔄 Confirmation Email Resent",
+                description="Resent confirmation email to existing unconfirmed subscriber",
+                color=0xffa500,  # Orange
+                fields=[
+                    {"name": "Email", "value": email, "inline": True},
+                    {"name": "Status", "value": "Still Pending Confirmation", "inline": True},
+                    {"name": "Action", "value": "Resent Confirmation Email", "inline": True}
+                ],
+                footer={"text": "SAY Website Backend • Email Service"}
+            )
+            
+            return jsonify({
+                "success": True,
+                "message": "We've resent your confirmation email. Please check your inbox (and spam folder).",
+                "email": email,
+                "action": "resend_confirmation"
+            }), 200
         
     except Exception as e:
         # Send error notification to Discord 
         discord_notifier.send_error_notification(
             service="Email Service",
             error=e,
-            context=f"Failed to process new subscription for {email}"
+            context=f"Failed to process subscription for {email} (action: {action_type or 'unknown'})"
         )
         
         return jsonify({
@@ -255,11 +324,11 @@ def subscribe():
             "error": str(e),
             "message": "Email sending failed. Please try again later.",
             "email": email
-        }), 429
+        }), 500
 
 @email_subscription_bp.route('/confirm', methods=['GET'])
 def confirm():
-    """Confirm user's email address - simplified without database"""
+    """Confirm user's email address using the database"""
     code = request.args.get('code')
     if not code:
         return jsonify({
@@ -268,8 +337,58 @@ def confirm():
             "message": "Confirmation code is required"
         }), 400
 
-    # For now, without database, we just accept any confirmation code
-    # You can implement proper validation later when you add your database back
+    cursor = g.cursor
+    if cursor is None:
+        current_app.logger.error("No database cursor available for confirmation")
+        return jsonify({
+            "success": False,
+            "error": "Database connection error",
+            "message": "Unable to process confirmation at this time"
+        }), 500
+    
+    # Look up the confirmation token in the database
+    cursor.execute("""
+        SELECT id, email, confirmed FROM newsletter 
+        WHERE confirmation_token = %s
+    """, (code,))
+    
+    subscription = cursor.fetchone()
+    
+    if not subscription:
+        # Invalid confirmation code
+        discord_notifier.send_diagnostic(
+            level="warning",
+            service="Email Service",
+            message="Invalid confirmation code attempted",
+            details={
+                "Confirmation Code": code[:8] + "...",
+                "Action": "Confirmation Failed"
+            }
+        )
+        
+        return jsonify({
+            "success": False,
+            "error": "Invalid confirmation code",
+            "message": "The confirmation code is invalid or has expired"
+        }), 400
+    
+    subscription_id, email, is_confirmed = subscription
+    
+    if is_confirmed:
+        # Already confirmed
+        return jsonify({
+            "success": True,
+            "message": "Email was already confirmed",
+            "email": email,
+            "status": "already_confirmed"
+        }), 200
+    
+    # Confirm the subscription
+    cursor.execute("""
+        UPDATE newsletter 
+        SET confirmed = TRUE, updated_at = CURRENT_TIMESTAMP 
+        WHERE id = %s
+    """, (subscription_id,))
     
     # Send confirmation success notification to Discord
     discord_notifier.send_embed(
@@ -277,15 +396,19 @@ def confirm():
         description="A user has successfully confirmed their email subscription",
         color=0x00ff00,  # Green
         fields=[
+            {"name": "Email", "value": email, "inline": True},
             {"name": "Status", "value": "Confirmed ✅", "inline": True},
             {"name": "Confirmation Code", "value": code[:8] + "...", "inline": True}
         ],
         footer={"text": "SAY Website Backend • Email Service"}
     )
     
+    current_app.logger.info(f"Successfully confirmed email subscription for: {email}")
+    
     return jsonify({
         "success": True,
-        "message": "Email confirmed successfully",
+        "message": "Email confirmed successfully! You're now subscribed to our newsletter.",
+        "email": email,
         "status": "confirmed"
     }), 200
 
@@ -293,7 +416,12 @@ def confirm():
 # Subscribe: curl -X POST -H "Content-Type: application/json" -d '{"email": "damien@alphagame.dev"}' http://localhost:8000/api/subscribe
 # Form Submit: curl -X POST -d "email=damien@alphagame.dev" http://localhost:8000/api/subscribe
 # Confirm: curl http://localhost:8000/api/confirm?code=CONFIRMATION_CODE_HERE
+# Rate limit debug: curl http://localhost:8000/api/rateLimitInternals (debug mode only)
 
-# Note: This module now has NO database dependencies! 
-# All email subscription logic works without any database
-# You can add your database layer back when you're ready
+# Features implemented:
+# ✅ Full MySQL database integration with newsletter table
+# ✅ Rate limiting with in-memory storage
+# ✅ Duplicate email handling (existing confirmed vs unconfirmed users)
+# ✅ Proper confirmation token validation
+# ✅ Discord notifications for all events
+# ✅ Thread-safe operations

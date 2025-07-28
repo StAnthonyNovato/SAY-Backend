@@ -81,21 +81,37 @@ with open("databaseSchema.sql", "r") as file:
 @app.before_request
 def add_contextual_cursor():
     try:
-        cnx.ping(attempts = 3, delay = 1)
+        cnx.ping(attempts=3, delay=1, reconnect=True)
     except InterfaceError as e:
         logger.warning("Failed to ping MySQL connection, reconnecting...")
-        cnx.reconnect(attempts=3, delay=1)
-
-    g.cursor = cnx.cursor()
+        try:
+            cnx.reconnect(attempts=3, delay=1)
+        except Exception as reconnect_error:
+            logger.error(f"Failed to reconnect to MySQL: {reconnect_error}")
+            # Don't fail the request, but log the issue
+            g.cursor = None
+            return
+    
+    try:
+        g.cursor = cnx.cursor(buffered=True)
+    except Exception as cursor_error:
+        logger.error(f"Failed to create cursor: {cursor_error}")
+        g.cursor = None
 
 @app.teardown_request
 def teardown_request(exception):
     """Close the database cursor after each request."""
     cursor: MySQLCursor = g.pop('cursor', None)
     if cursor is not None:
-        cursor.close()
-
-    cnx.commit()
+        try:
+            cursor.close()
+        except Exception as e:
+            logger.warning(f"Error closing cursor: {e}")
+    
+    try:
+        cnx.commit()
+    except Exception as e:
+        logger.warning(f"Error committing transaction: {e}")
 
 CORS(app, resources = {
     "/*": {
