@@ -8,38 +8,17 @@ from flask_cors import CORS
 import atexit
 import logging
 from os import getenv
+from mysql.connector.cursor import MySQLCursor
+from mysql.connector import (
+    connect,
+    Error as MySQLError,
+    InterfaceError,
+    __version__ as mysql_version)
+from .config import MYSQL_CONNECTION_INFO
+from .utility import MultiLineFormatter
 from .version import __version__
 from datetime import datetime
-
-
-
-class MultiLineFormatter(logging.Formatter):
-    def format(self, record):
-        # Format the first line using the parent formatter
-        message = super().format(record)
-        
-        # If message contains newlines, handle each line separately
-        if "\n" in record.getMessage():
-            # Get the formatted first line to extract the prefix
-            first_line = message.split('\n')[0]
-            # Extract the prefix from the first line (everything before the actual message)
-            prefix = first_line[:first_line.find(record.getMessage())]
-            
-            # Format each line with the proper prefix
-            lines = []
-            for line in record.getMessage().splitlines():
-                # Create a new record with this line as the message
-                new_record = logging.LogRecord(
-                    record.name, record.levelno, record.pathname, 
-                    record.lineno, line, record.args, record.exc_info,
-                    func=record.funcName
-                )
-                # Format it with the parent formatter
-                formatted_line = super().format(new_record)
-                lines.append(formatted_line)
-                
-            return "\n".join(lines)
-        return message
+from flask import g
 
 # Configure logging
 level = (logging.DEBUG if getenv("FLASK_ENV") == "development" else logging.INFO)
@@ -63,6 +42,60 @@ from .bp.healthcheck import bp_healthcheck
 app = Flask(__name__)
 app.debug = app.debug or (getenv("FLASK_DEBUG", False) != False or getenv("FLASK_ENV", False) == "development")
 
+logger.info("Using MySQL Connector/Python version: %s", mysql_version)
+logger.info("Connecting to MySQL database with config:")
+logger.info(f"* Host: {MYSQL_CONNECTION_INFO['host']}")
+logger.info(f"* User: {MYSQL_CONNECTION_INFO['user']}")
+logger.info(f"* Port: {MYSQL_CONNECTION_INFO['port']}")
+logger.info(f"* Database: {MYSQL_CONNECTION_INFO['database']}")
+
+cnx = connect(**MYSQL_CONNECTION_INFO)
+
+if cnx.is_connected():
+    logger.info("Successfully connected to the MySQL database.")
+else:
+    logger.error("Failed to connect to the MySQL database.")
+    # Exit the application if the database connection fails
+    exit(1)
+
+cur = cnx.cursor()
+cur.execute("SELECT VERSION()")
+result = cur.fetchone()
+db_version = result[0] if result and isinstance(result, tuple) else "Unknown"
+
+logging.info(f"MySQL database version: {db_version}")
+
+
+with open("databaseSchema.sql", "r") as file:
+    schema_sql = file.read()
+    commands = schema_sql.split(';')
+    commands = [cmd.strip() for cmd in commands if cmd.strip()]  # Remove empty commands
+    for command in commands:
+        try:
+            cur.execute(command)
+        except MySQLError as e:
+            logger.error(f"Error executing command '{command}': {e}")
+    cnx.commit()
+    logger.info("Database schema initialized successfully.")
+
+@app.before_request
+def add_contextual_cursor():
+    try:
+        cnx.ping(attempts = 3, delay = 1)
+    except InterfaceError as e:
+        logger.warning("Failed to ping MySQL connection, reconnecting...")
+        cnx.reconnect(attempts=3, delay=1)
+
+    g.cursor = cnx.cursor()
+
+@app.teardown_request
+def teardown_request(exception):
+    """Close the database cursor after each request."""
+    cursor: MySQLCursor = g.pop('cursor', None)
+    if cursor is not None:
+        cursor.close()
+
+    cnx.commit()
 
 CORS(app, resources = {
     "/*": {
