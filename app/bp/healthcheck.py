@@ -3,12 +3,22 @@
 # This software is released under the MIT License.
 # https://opensource.org/licenses/MIT
 
-from flask import Blueprint, current_app, jsonify, g
-from datetime import datetime
+from flask import Blueprint, current_app, jsonify, g, request, make_response
+from datetime import datetime, timedelta
 from ..version import __version__
+from typing import Dict, Any
 import os
 
 bp_healthcheck = Blueprint('healthcheck', __name__)
+
+# In-memory cache for healthcheck
+# If we were to scale this, we would use a more robust caching solution like Redis or Memcached
+# ... but we're not. ;)
+_healthcheck_cache: Dict[str, Any] = {
+    "response": None,
+    "timestamp": None,
+    "status_code": None
+}
 
 @bp_healthcheck.route("/api/health")
 @bp_healthcheck.route("/api/healthcheck")
@@ -16,7 +26,21 @@ bp_healthcheck = Blueprint('healthcheck', __name__)
 @bp_healthcheck.route("/healthcheck")
 def health():
     """Comprehensive health check for all system components - simplified without database"""
-    
+
+    # Check for cache usage
+    use_cache = request.args.get("c") == "1"
+    now = datetime.utcnow()
+    cache_valid = (
+        _healthcheck_cache["response"] is not None and
+        _healthcheck_cache["timestamp"] is not None and
+        (now - _healthcheck_cache["timestamp"]) < timedelta(minutes=1)
+    )
+
+    if use_cache and cache_valid:
+        resp = make_response(jsonify(_healthcheck_cache["response"]), _healthcheck_cache["status_code"])
+        resp.headers["X-Cache"] = "HIT"
+        return resp
+
     health_status = {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -136,8 +160,15 @@ def health():
     
     # Return appropriate HTTP status code
     status_code = 200 if overall_healthy else 503
-    
-    return jsonify(health_status), status_code
+
+    # Update cache
+    _healthcheck_cache["response"] = health_status
+    _healthcheck_cache["timestamp"] = now
+    _healthcheck_cache["status_code"] = status_code
+
+    resp = make_response(jsonify(health_status), status_code)
+    resp.headers["X-Cache"] = "MISS"
+    return resp
 
 @bp_healthcheck.route("/api/status")
 def status():

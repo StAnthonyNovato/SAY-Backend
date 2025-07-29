@@ -64,10 +64,10 @@ logger.info(f"* Database: {MYSQL_CONNECTION_INFO['database']}")
 pool_config = MYSQL_CONNECTION_INFO.copy()
 pool_config.update({
     'pool_name': 'say_backend_pool',
-    'pool_size': 10,  # Maximum number of connections in the pool
+    'pool_size': 20,  # Increased pool size for more concurrent connections
     'pool_reset_session': True,  # Reset session variables when connection is returned to pool
     'autocommit': False,  # We'll handle commits manually
-    'connect_timeout': 30,  # Connection timeout
+    'connect_timeout': 10,  # Reduced timeout for faster failure
     'use_unicode': True,
     'charset': 'utf8mb4'
 })
@@ -115,14 +115,19 @@ health_check_lock = threading.Lock()
 
 @app.before_request
 def add_contextual_cursor():
-    """Get a connection from the pool and create a cursor for this request."""
-
-    g.request_start_time = time.time()  # Store request start time for logging later
+    """Get a connection from the pool and create a cursor for this request, unless static/healthcheck."""
+    g.request_start_time = time.time()
     global last_health_check
-    
+
+    # Skip DB setup for static/healthcheck routes
+    if request.endpoint in ('index', 'static') or request.path in ('/', '/health'):
+        return
+
+    # Timing start
+    t0 = time.time()
     try:
-        # Get a connection from the pool
         g.cnx = cnx_pool.get_connection()
+        t1 = time.time()
         
         # Only do health checks periodically, not on every request
         current_time = datetime.now()
@@ -141,9 +146,10 @@ def add_contextual_cursor():
             except Exception as ping_error:
                 logger.warning(f"Database ping failed, but continuing with fresh connection: {ping_error}")
         
-        # Create cursor for this request
-        g.cursor = g.cnx.cursor(buffered=True)
-        
+        # Use unbuffered cursor for faster creation unless buffering is needed
+        g.cursor = g.cnx.cursor(buffered=False)
+        t2 = time.time()
+        logger.debug(f"DB connection acquired in {(t1-t0):.4f}s, cursor in {(t2-t1):.4f}s")
     except Exception as e:
         logger.error(f"Failed to get database connection from pool: {e}")
         g.cnx = None
