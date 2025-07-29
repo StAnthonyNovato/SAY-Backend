@@ -34,7 +34,6 @@ handler.setFormatter(formatter)
 
 logging.basicConfig(level=level, handlers=[handler])
 logger = logging.getLogger("app")
-
 # get a list of all initialized loggers
 all_loggers = [logging.getLogger(lgr) for lgr in logging.root.manager.loggerDict.keys() if lgr.startswith("app")]
 for logger in all_loggers:
@@ -109,6 +108,8 @@ health_check_lock = threading.Lock()
 @app.before_request
 def add_contextual_cursor():
     """Get a connection from the pool and create a cursor for this request."""
+
+    g.request_start_time = time.time()  # Store request start time for logging later
     global last_health_check
     
     try:
@@ -167,6 +168,27 @@ def teardown_request(exception):
             except Exception as e:
                 logger.warning(f"Error returning connection to pool: {e}")
 
+@app.after_request
+def log_request(response):
+    """Log the request and response details."""
+    status_code = response.status_code
+    # Flask default request log format: method path status_code remote_addr user_agent
+    # Include query parameters in the log if present
+    query_string = f"?{request.query_string.decode()}" if request.query_string else ""
+    logging.getLogger('app.request').info(
+        '%s %s%s %s %s %s "%s"',
+        request.method,
+        request.path,
+        query_string,
+        status_code,
+        request.remote_addr,
+        # how long the request took
+        f"{(time.time() - g.request_start_time):.2f}s",
+        request.headers.get('User-Agent', 'Unknown')
+    )
+    
+    return response
+
 CORS(app, resources = {
     "/*": {
         "origins": "*" # TODO: Change this to the specific origin in production
@@ -191,6 +213,7 @@ else:
 def before_request():
     """Log incoming requests for diagnostic purposes."""
 
+    
     # Do we have the X-Forwarded-For header?
     usingForwardedFor = False
     if 'X-Forwarded-For' in request.headers:

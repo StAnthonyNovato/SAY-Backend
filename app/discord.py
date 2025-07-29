@@ -238,7 +238,6 @@ class DiscordNotificationManager:
         Returns True if successful, False if rate limited and should retry.
         """
         logger.debug("Not sending Discord notification - checking if enabled and webhook URL is set")
-        return
         if not self.webhook_url:
             logger.error("No webhook URL available")
             return True  # Don't retry

@@ -1,4 +1,5 @@
 flask
+gunicorn
 flask-cors
 requests
 python-dotenv # debug-only
