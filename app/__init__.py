@@ -214,7 +214,11 @@ def before_request():
 @app.errorhandler(500)
 def handle_internal_error(error):
     """Handle internal server errors and send Discord notification."""
-    logger.error(f"Internal server error: {error}")
+    import traceback
+    
+    # Get full traceback for debugging
+    tb_str = traceback.format_exc()
+    logger.error(f"Internal server error: {error}\nTraceback:\n{tb_str}")
     
     # Send error notification to Discord
     discord_notifier.send_diagnostic(
@@ -229,7 +233,17 @@ def handle_internal_error(error):
         }
     )
     
-    return "An internal server error occurred. Please try again later.", 500
+    # In debug mode, return detailed error information including traceback
+    if app.debug:
+        return jsonify({
+            "error": "Internal server error",
+            "message": str(error),
+            "traceback": tb_str,
+            "endpoint": request.path if request else "Unknown",
+            "method": request.method if request else "Unknown"
+        }), 500
+    else:
+        return "An internal server error occurred. Please try again later.", 500
 
 @app.errorhandler(404)
 def handle_not_found(error):

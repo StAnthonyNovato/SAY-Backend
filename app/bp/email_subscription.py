@@ -85,6 +85,7 @@ def send_subscription_discord_notification(email_state: EmailSubscriptionState, 
         )
 
 ACTUALLY_SEND_EMAIL = not getenv("NO_EMAIL")  # If NO_EMAIL is set, emails will not be sent
+LOAD_TESTING_MODE = getenv("LOAD_TESTING") == "1"  # If LOAD_TESTING=1, return confirmation codes in responses
 
 # Rate limiting configuration
 RATE_LIMIT_EMAILS_PER_HOUR = int(getenv("RATE_LIMIT_EMAILS_PER_HOUR", "2"))  # Default: 2 emails per hour
@@ -348,20 +349,28 @@ def subscribe():
         
         # Return appropriate response based on email state
         if email_state == EmailSubscriptionState.NEW_SUBSCRIPTION:
-            return jsonify({
+            response_data = {
                 "success": True,
                 "message": "Subscription successful! We've sent you a confirmation email. (You might need to check your spam folder)",
                 "email": email,
                 "action": email_state.value
-            }), 200
+            }
+            # Include confirmation code for load testing
+            if LOAD_TESTING_MODE:
+                response_data["confirmation_code"] = confirmation_code
+            return jsonify(response_data), 200
             
         elif email_state == EmailSubscriptionState.RESEND_CONFIRMATION:
-            return jsonify({
+            response_data = {
                 "success": True,
                 "message": "We've resent your confirmation email. Please check your inbox (and spam folder).",
                 "email": email,
                 "action": email_state.value
-            }), 200
+            }
+            # Include confirmation code for load testing
+            if LOAD_TESTING_MODE:
+                response_data["confirmation_code"] = confirmation_code
+            return jsonify(response_data), 200
         
     except Exception as e:
         # Send error notification to Discord 
