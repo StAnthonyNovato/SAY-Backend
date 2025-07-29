@@ -16,7 +16,7 @@ from mysql.connector import (
     pooling,
     __version__ as mysql_version)
 from .config import MYSQL_CONNECTION_INFO
-from .utility import MultiLineFormatter
+from .utility import MultiLineFormatter, GunicornWorkerFilter
 from .version import __version__
 from datetime import datetime, timedelta
 from flask import g
@@ -28,16 +28,24 @@ faulthandler.enable()
 # Configure logging
 level = (logging.DEBUG if getenv("FLASK_ENV") == "development" or getenv("DEBUG_LOGGING") != None else logging.INFO)
 
-formatter = MultiLineFormatter('%(asctime)-21s %(levelname)-8s %(name)-12s | %(message)s', datefmt="%Y-%m-%d %H:%M:%S")
+formatter = MultiLineFormatter(f'[%(worker_id)s] %(asctime)-21s %(levelname)-8s %(name)-12s | %(message)s', datefmt="%Y-%m-%d %H:%M:%S")
 handler = logging.StreamHandler()
 handler.setFormatter(formatter)
-
+handler.addFilter(GunicornWorkerFilter())  # Add the Gunicorn worker ID filter
 logging.basicConfig(level=level, handlers=[handler])
 logger = logging.getLogger("app")
-# get a list of all initialized loggers
-all_loggers = [logging.getLogger(lgr) for lgr in logging.root.manager.loggerDict.keys() if lgr.startswith("app")]
-for logger in all_loggers:
-    logger.setLevel(level)
+# Ensure all app loggers use the GunicornWorkerFilter and correct formatter
+for lgr in logging.root.manager.loggerDict.keys():
+    if lgr.startswith("app"):
+        l = logging.getLogger(lgr)
+        l.setLevel(level)
+        l.propagate = False  # Prevent log propagation to ancestor loggers
+        # Add filter if not already present
+        if not any(isinstance(f, GunicornWorkerFilter) for f in getattr(l, 'filters', [])):
+            l.addFilter(GunicornWorkerFilter())
+        # Add handler if not already present
+        if not any(isinstance(h, logging.StreamHandler) for h in getattr(l, 'handlers', [])):
+            l.addHandler(handler)
 
 from .bp.email_subscription import email_subscription_bp
 from .discord import discord_notifier

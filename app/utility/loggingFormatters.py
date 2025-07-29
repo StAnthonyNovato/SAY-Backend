@@ -4,7 +4,7 @@
 # https://opensource.org/licenses/MIT
 
 import logging
-
+from os import getenv, getpid
 class MultiLineFormatter(logging.Formatter):
     """Custom logging formatter that handles multi-line messages.
     
@@ -38,3 +38,16 @@ class MultiLineFormatter(logging.Formatter):
                 
             return "\n".join(lines)
         return message
+
+class GunicornWorkerFilter(logging.Filter):
+    """Filter to add the Gunicorn worker ID to log records."""
+    
+    def filter(self, record):
+        # Add the worker ID to the log record
+        worker_id = getenv("GUNICORN_WORKER_ID", "unknown")
+
+        if worker_id != "unknown":
+            record.worker_id = "worker" + worker_id
+        else:
+            record.worker_id = f"PID {getpid()}"
+        return True
