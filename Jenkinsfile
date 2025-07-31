@@ -69,9 +69,12 @@ pipeline {
         stage('Download Dependencies') {
             steps {
                 script {
+                    def hosts = env.HOSTS.split(',')
+                    def tasks = [:]
                     for (int i = 0; i < hosts.size(); i++) {
-                        def currentHost = hosts[i]
-                        tasks[currentHost] = {
+                        def host = hosts[i] // <-- define inside the loop
+                        tasks[host] = {
+                            def currentHost = host // <-- define inside the closure
                             sshagent(['stanthonyyouth-server']) { 
                                 sh """
                                     ssh ${env.REMOTE_USER}@${currentHost} " \
@@ -83,7 +86,7 @@ pipeline {
                             }
                         }
                     }
-
+                    parallel tasks
                 }
             }
         }
