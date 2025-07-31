@@ -171,6 +171,18 @@ class HighVolumeSubscriptionUser(HttpUser):
         # Both success and rate limit responses are valid for this test
         # Locust will automatically track response times and status codes
 
+class SpamHealthCheckUser(HttpUser):
+    """
+    Simulates a user spamming the health check endpoint
+    This is to test how the system handles excessive requests
+    """
+    wait_time = between(1, 5)  # Extremely fast requests
+    
+    @task(100)  # Very high frequency to simulate spam
+    def spam_healthcheck(self):
+        """Spam the health check endpoint"""
+        self.client.get("/api/healthcheck", name="spam_healthcheck")
+
 class AdminUser(HttpUser):
     """
     Simulates admin/debug operations
