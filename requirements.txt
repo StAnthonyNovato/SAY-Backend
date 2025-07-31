@@ -6,3 +6,4 @@ python-dotenv # debug-only
 dhooks
 mysql-connector-python
 setuptools-scm
+prometheus_flask_exporter

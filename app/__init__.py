@@ -3,11 +3,13 @@
 # This software is released under the MIT License.
 # https://opensource.org/licenses/MIT
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 import atexit
 import logging
 import os
+os.mkdir(os.getenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus_multiproc_dir"), exist_ok=True)
+from prometheus_client import multiprocess, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 from mysql.connector.cursor import MySQLCursor
 from mysql.connector import (
     connect,
@@ -15,6 +17,7 @@ from mysql.connector import (
     InterfaceError,
     pooling,
     __version__ as mysql_version)
+from prometheus_flask_exporter.multiprocess import GunicornPrometheusMetrics
 from .config import MYSQL_CONNECTION_INFO
 from .utility import MultiLineFormatter, GunicornWorkerFilter, apply_migrations
 from .version import __version__
@@ -54,6 +57,9 @@ from .bp.program_signup import program_signup_bp
 
 app = Flask(__name__)
 app.debug = app.debug or (os.getenv("FLASK_DEBUG", False) != False or os.getenv("FLASK_ENV", False) == "development")
+
+metrics = GunicornPrometheusMetrics(app, group_by='endpoint', path="/metrics", defaults_prefix="say_website_backend_")
+metrics.info('app', 'SAY Website Backend', version=__version__)
 
 logger.info("Using MySQL Connector/Python version: %s", mysql_version)
 logger.info("Connecting to MySQL database with config:")
@@ -102,6 +108,12 @@ except Exception as e:
 last_health_check = None
 health_check_interval = timedelta(minutes=5)  # Only check health every 5 minutes
 health_check_lock = threading.Lock()
+
+@app.route("/metrics")
+def metrics():
+    registry = CollectorRegistry()
+    multiprocess.MultiProcessCollector(registry)
+    return Response(generate_latest(registry), mimetype=CONTENT_TYPE_LATEST)
 
 @app.before_request
 def add_contextual_cursor():
