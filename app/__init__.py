@@ -164,7 +164,7 @@ def add_contextual_cursor():
 @app.route("/heartbeat", methods=["GET"])
 def heartbeat():
     """Health check endpoint."""
-    return jsonify({"status": "ok"}), 
+    return jsonify({"status": "ok"}), 200
 
 @app.teardown_request
 def teardown_request(exception):
