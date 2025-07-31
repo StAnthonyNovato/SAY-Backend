@@ -69,13 +69,12 @@ pipeline {
         stage('Download Dependencies') {
             steps {
                 script {
-                    def hosts = env.HOSTS.split(',')
-                    def tasks = [:]
-                    for (host in hosts) {
-                        tasks[host] = {
+                    for (int i = 0; i < hosts.size(); i++) {
+                        def currentHost = hosts[i]
+                        tasks[currentHost] = {
                             sshagent(['stanthonyyouth-server']) { 
                                 sh """
-                                    ssh ${env.REMOTE_USER}@${host} " \
+                                    ssh ${env.REMOTE_USER}@${currentHost} " \
                                         cd ${env.REMOTE_PATH} && \
                                         python3 -m venv ${env.VENV_DIR} && \
                                         ${env.VENV_DIR}/bin/python -m pip install -r requirements.txt
@@ -84,7 +83,7 @@ pipeline {
                             }
                         }
                     }
-                    parallel tasks
+
                 }
             }
         }
