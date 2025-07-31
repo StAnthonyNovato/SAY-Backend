@@ -3,10 +3,10 @@
 -- This software is released under the MIT License.
 -- https://opensource.org/licenses/MIT
 
-CREATE TABLE IF NOT EXISTS user_subscriptions (
+CREATE TABLE IF NOT EXISTS registrations (
     id           INTEGER PRIMARY KEY AUTO_INCREMENT,
     timestamp    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
+    humanid      VARCHAR(255) NOT NULL,
     -- Parent
 
     -- Regarding phone numbers, I'm not sure of the best way to store these.
