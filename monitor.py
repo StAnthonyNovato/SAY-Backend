@@ -55,7 +55,6 @@ def main():
     logging.debug("Getting health check information...")
     try:
         response = requests.get(url, timeout=10)
-        response.raise_for_status()
         data = response.json()
         logger.info(f"Health check information aquired after {response.elapsed.total_seconds()} seconds.")
 
