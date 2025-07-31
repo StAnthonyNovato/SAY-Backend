@@ -12,87 +12,107 @@ pipeline {
     }
 
     environment {
-        REMOTE_HOST = '10.0.0.167'
-        REMOTE_USER = 'say' // Change this to your remote username
-        REMOTE_PATH = '/opt/stanthonyyouth' // Change this to your target path
-        VENV_DIR = "${REMOTE_PATH}/venv" // Directory for the virtual environment
+        HOSTS = "10.0.0.167" // Comma-separated list of hosts
+        REMOTE_USER = 'say'
+        REMOTE_PATH = '/opt/stanthonyyouth'
+        VENV_DIR = "${REMOTE_PATH}/venv"
     }
     
     stages {
         stage("Stop Service") {
             steps {
-                sshagent(['stanthonyyouth-server']) {
-                    sh '''
-                        # Create SSH directory if it doesn't exist
-                        mkdir -p ~/.ssh
-                        chmod 700 ~/.ssh
-
-                        # Add remote host to known_hosts
-                        ssh-keyscan -H ${REMOTE_HOST} >> ~/.ssh/known_hosts
-
-                        ssh ${REMOTE_USER}@${REMOTE_HOST} " \
-                            sudo /bin/systemctl stop say-backend.service
-                            rm -rf /opt/stanthonyyouth/*  # Clear the remote directory
-                        
-                        "
-                    '''
+                script {
+                    def hosts = env.HOSTS.split(',')
+                    def tasks = [:]
+                    for (host in hosts) {
+                        tasks[host] = {
+                            sshagent(['stanthonyyouth-server']) {
+                                sh """
+                                    mkdir -p ~/.ssh
+                                    chmod 700 ~/.ssh
+                                    ssh-keyscan -H ${host} >> ~/.ssh/known_hosts
+                                    ssh ${env.REMOTE_USER}@${host} " \
+                                        sudo /bin/systemctl stop say-backend.service
+                                        rm -rf ${env.REMOTE_PATH}/*  # Clear the remote directory
+                                    "
+                                """
+                            }
+                        }
+                    }
+                    parallel tasks
                 }
             }
         }
         stage('Sync Files') {
             steps {
-                sshagent(['stanthonyyouth-server']) { 
-                    sh '''
-                        # Add remote host to known_hosts
-                        ssh-keyscan -H ${REMOTE_HOST} >> ~/.ssh/known_hosts
-                        
-                        python3 -m pip install setuptools-scm
-                        python3 -c "import setuptools_scm; print(setuptools_scm.get_version())" > version.txt
-
-                        # Rsync files to remote host
-                        rsync -avz --delete \
-                            --exclude='.git' \
-                            --exclude='Jenkinsfile' \
-                            --exclude='*.log' \
-                            --exclude='*venv*' \
-                            --exclude='*.pyc' \
-                            ./ ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/
-                    '''
+                script {
+                    def hosts = env.HOSTS.split(',')
+                    def tasks = [:]
+                    for (host in hosts) {
+                        tasks[host] = {
+                            sshagent(['stanthonyyouth-server']) { 
+                                sh """
+                                    ssh-keyscan -H ${host} >> ~/.ssh/known_hosts
+                                    python3 -m pip install setuptools-scm
+                                    python3 -c "import setuptools_scm; print(setuptools_scm.get_version())" > version.txt
+                                    rsync -avz --delete \
+                                        --exclude='.git' \
+                                        --exclude='Jenkinsfile' \
+                                        --exclude='*.log' \
+                                        --exclude='*venv*' \
+                                        --exclude='*.pyc' \
+                                        ./ ${env.REMOTE_USER}@${host}:${env.REMOTE_PATH}/
+                                """
+                            }
+                        }
+                    }
+                    parallel tasks
                 }
             }
         }
-
         stage('Download Dependencies') {
             steps {
-                sshagent(['stanthonyyouth-server']) { 
-                    sh '''
-                        ssh ${REMOTE_USER}@${REMOTE_HOST} " \
-                            # Add remote host to known_hosts
-                            ssh-keyscan -H ${REMOTE_HOST} >> ~/.ssh/known_hosts
-                            
-                            cd ${REMOTE_PATH} && \
-                            rm -rf ${VENV_DIR} && \
-
-                            python3 -m venv ${VENV_DIR} && \
-                            ${VENV_DIR}/bin/python -m pip install --upgrade pip && \
-                            ${VENV_DIR}/bin/python -m pip install -r requirements.txt
-                        "
-                    '''
+                script {
+                    def hosts = env.HOSTS.split(',')
+                    def tasks = [:]
+                    for (host in hosts) {
+                        tasks[host] = {
+                            sshagent(['stanthonyyouth-server']) { 
+                                sh """
+                                    ssh ${env.REMOTE_USER}@${host} " \
+                                        ssh-keyscan -H ${host} >> ~/.ssh/known_hosts
+                                        cd ${env.REMOTE_PATH} && \
+                                        rm -rf ${env.VENV_DIR} && \
+                                        python3 -m venv ${env.VENV_DIR} && \
+                                        ${env.VENV_DIR}/bin/python -m pip install --upgrade pip && \
+                                        ${env.VENV_DIR}/bin/python -m pip install -r requirements.txt
+                                    "
+                                """
+                            }
+                        }
+                    }
+                    parallel tasks
                 }
             }
         }
-
         stage('Restart Service') {
             steps {
-                sshagent(['stanthonyyouth-server']) { 
-                    sh '''
-                        # Add remote host to known_hosts
-                        ssh-keyscan -H ${REMOTE_HOST} >> ~/.ssh/known_hosts
-
-                        ssh ${REMOTE_USER}@${REMOTE_HOST} " \
-                            sudo /bin/systemctl restart say-backend.service
-                        "
-                    '''
+                script {
+                    def hosts = env.HOSTS.split(',')
+                    def tasks = [:]
+                    for (host in hosts) {
+                        tasks[host] = {
+                            sshagent(['stanthonyyouth-server']) { 
+                                sh """
+                                    ssh-keyscan -H ${host} >> ~/.ssh/known_hosts
+                                    ssh ${env.REMOTE_USER}@${host} " \
+                                        sudo /bin/systemctl restart say-backend.service
+                                    "
+                                """
+                            }
+                        }
+                    }
+                    parallel tasks
                 }
             }
         }
