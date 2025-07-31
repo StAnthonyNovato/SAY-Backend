@@ -8,7 +8,11 @@ from flask_cors import CORS
 import atexit
 import logging
 import os
-os.mkdir(os.getenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus_multiproc_dir"), exist_ok=True)
+if not os.path.exists(os.getenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus_multiproc_dir")):
+    # Create the directory if it doesn't exist
+    logger = logging.getLogger("app")
+    logger.info("Creating Prometheus multiprocess directory at %s", os.getenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus_multiproc_dir"))
+    os.mkdir(os.getenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus_multiproc_dir"))
 from prometheus_client import multiprocess, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 from mysql.connector.cursor import MySQLCursor
 from mysql.connector import (
