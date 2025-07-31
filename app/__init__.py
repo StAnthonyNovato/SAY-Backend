@@ -164,7 +164,7 @@ def add_contextual_cursor():
 @app.route("/heartbeat", methods=["GET"])
 def heartbeat():
     """Health check endpoint."""
-    return jsonify({"status": "ok"}), 200
+    return jsonify({"status": "ok"}), 
 
 @app.teardown_request
 def teardown_request(exception):
@@ -255,7 +255,7 @@ def before_request():
     # fcnl = From Client Not Logged
     fcnl = not (request.args.get("fcnl") is None)
     if not app.debug and not fcnl and request.method != "OPTIONS":
-        if request.path in ("/health", "/healthcheck", "/api/health", "/api/healthcheck", "/heartbeat"): return
+        if request.path in ("/health", "/healthcheck", "/api/health", "/api/healthcheck", "/heartbeat", "/metrics"): return
         discord_notifier.send_plaintext(
             message = f"**[Request]** {request.method} {request.path} from {request.remote_addr} {warningDirectHit}",
             username = "Request Logger Subsystem",
