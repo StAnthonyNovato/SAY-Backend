@@ -33,7 +33,7 @@ pipeline {
                                     ssh-keyscan -H ${host} >> ~/.ssh/known_hosts
                                     ssh ${env.REMOTE_USER}@${host} " \
                                         sudo /bin/systemctl stop say-backend.service
-                                        rm -rf ${env.REMOTE_PATH}/*  # Clear the remote directory
+                                        rm -rf ${env.REMOTE_PATH}/* ${env.REMOTE_PATH}/.[!.]* ${env.REMOTE_PATH}/..?*  # Clear the remote directory, including hidden files
                                     "
                                 """
                             }
@@ -47,26 +47,22 @@ pipeline {
             steps {
                 script {
                     def hosts = env.HOSTS.split(',')
-                    def tasks = [:]
                     for (host in hosts) {
-                        tasks[host] = {
-                            sshagent(['stanthonyyouth-server']) { 
-                                sh """
-                                    ssh-keyscan -H ${host} >> ~/.ssh/known_hosts
-                                    python3 -m pip install setuptools-scm
-                                    python3 -c "import setuptools_scm; print(setuptools_scm.get_version())" > version.txt
-                                    rsync -avz --delete \
-                                        --exclude='.git' \
-                                        --exclude='Jenkinsfile' \
-                                        --exclude='*.log' \
-                                        --exclude='*venv*' \
-                                        --exclude='*.pyc' \
-                                        ./ ${env.REMOTE_USER}@${host}:${env.REMOTE_PATH}/
-                                """
-                            }
+                        sshagent(['stanthonyyouth-server']) { 
+                            sh """
+                                ssh-keyscan -H ${host} >> ~/.ssh/known_hosts
+                                python3 -m pip install setuptools-scm
+                                python3 -c "import setuptools_scm; print(setuptools_scm.get_version())" > version.txt
+                                rsync -avz --delete \
+                                    --exclude='.git' \
+                                    --exclude='Jenkinsfile' \
+                                    --exclude='*.log' \
+                                    --exclude='*venv*' \
+                                    --exclude='*.pyc' \
+                                    ./ ${env.REMOTE_USER}@${host}:${env.REMOTE_PATH}/
+                            """
                         }
                     }
-                    parallel tasks
                 }
             }
         }
@@ -80,9 +76,7 @@ pipeline {
                             sshagent(['stanthonyyouth-server']) { 
                                 sh """
                                     ssh ${env.REMOTE_USER}@${host} " \
-                                        ssh-keyscan -H ${host} >> ~/.ssh/known_hosts
                                         cd ${env.REMOTE_PATH} && \
-                                        rm -rf ${env.VENV_DIR} && \
                                         python3 -m venv ${env.VENV_DIR} && \
                                         ${env.VENV_DIR}/bin/python -m pip install -r requirements.txt
                                     "
