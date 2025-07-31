@@ -2,7 +2,9 @@
 # 
 # This software is released under the MIT License.
 # https://opensource.org/licenses/MIT
+
 from typing import Dict, Any
+
 class Post:
     """Represents a blog post, as defined by the Jekyll data structure."""
     raw: dict # not recommended to use directly, use properties instead

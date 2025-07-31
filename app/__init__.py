@@ -7,67 +7,191 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import atexit
 import logging
-from os import getenv
+import os
+from mysql.connector.cursor import MySQLCursor
+from mysql.connector import (
+    connect,
+    Error as MySQLError,
+    InterfaceError,
+    pooling,
+    __version__ as mysql_version)
+from .config import MYSQL_CONNECTION_INFO
+from .utility import MultiLineFormatter, GunicornWorkerFilter, apply_migrations
 from .version import __version__
-from datetime import datetime
+from datetime import datetime, timedelta
+from flask import g
+import faulthandler
+import threading
+import time
 
-
-
-class MultiLineFormatter(logging.Formatter):
-    def format(self, record):
-        # Format the first line using the parent formatter
-        message = super().format(record)
-        
-        # If message contains newlines, handle each line separately
-        if "\n" in record.getMessage():
-            # Get the formatted first line to extract the prefix
-            first_line = message.split('\n')[0]
-            # Extract the prefix from the first line (everything before the actual message)
-            prefix = first_line[:first_line.find(record.getMessage())]
-            
-            # Format each line with the proper prefix
-            lines = []
-            for line in record.getMessage().splitlines():
-                # Create a new record with this line as the message
-                new_record = logging.LogRecord(
-                    record.name, record.levelno, record.pathname, 
-                    record.lineno, line, record.args, record.exc_info,
-                    func=record.funcName
-                )
-                # Format it with the parent formatter
-                formatted_line = super().format(new_record)
-                lines.append(formatted_line)
-                
-            return "\n".join(lines)
-        return message
-
+faulthandler.enable()
 # Configure logging
-level = (logging.DEBUG if getenv("FLASK_ENV") == "development" else logging.INFO)
+level = (logging.DEBUG if os.getenv("FLASK_ENV") == "development" or os.getenv("DEBUG_LOGGING") != None else logging.INFO)
 
-formatter = MultiLineFormatter('%(asctime)-21s %(levelname)-8s %(name)-12s | %(message)s', datefmt="%Y-%m-%d %H:%M:%S")
+formatter = MultiLineFormatter(f'%(asctime)-21s %(levelname)-8s %(name)-12s | %(message)s', datefmt="%Y-%m-%d %H:%M:%S")
 handler = logging.StreamHandler()
 handler.setFormatter(formatter)
-
+handler.addFilter(GunicornWorkerFilter())  # Add the Gunicorn worker ID filter
 logging.basicConfig(level=level, handlers=[handler])
 logger = logging.getLogger("app")
-
-# get a list of all initialized loggers
-all_loggers = [logging.getLogger(lgr) for lgr in logging.root.manager.loggerDict.keys() if lgr.startswith("app")]
-for logger in all_loggers:
-    logger.setLevel(level)
+# Ensure all app loggers use the GunicornWorkerFilter and correct formatter
+for lgr in logging.root.manager.loggerDict.keys():
+    if lgr.startswith("app"):
+        l = logging.getLogger(lgr)
+        l.setLevel(level)
+        l.propagate = False  # Prevent log propagation to ancestor loggers
+        # Add filter if not already present
+        if not any(isinstance(f, GunicornWorkerFilter) for f in getattr(l, 'filters', [])):
+            l.addFilter(GunicornWorkerFilter())
+        # Add handler if not already present
+        if not any(isinstance(h, logging.StreamHandler) for h in getattr(l, 'handlers', [])):
+            l.addHandler(handler)
 
 from .bp.email_subscription import email_subscription_bp
 from .discord import discord_notifier
-from .config import Config
-from .database import db, init_db
 from .bp.healthcheck import bp_healthcheck
+from .bp.program_signup import program_signup_bp
 
 app = Flask(__name__)
-app.config.from_object(Config)
-app.debug = app.debug or (getenv("FLASK_DEBUG", False) != False or getenv("FLASK_ENV", False) == "development")
+app.debug = app.debug or (os.getenv("FLASK_DEBUG", False) != False or os.getenv("FLASK_ENV", False) == "development")
 
-# Initialize database
-init_db(app)
+logger.info("Using MySQL Connector/Python version: %s", mysql_version)
+logger.info("Connecting to MySQL database with config:")
+logger.info(f"* Host: {MYSQL_CONNECTION_INFO['host']}")
+logger.info(f"* Port: {MYSQL_CONNECTION_INFO['port']}")
+logger.info(f"* Database: {MYSQL_CONNECTION_INFO['database']}")
+
+# Create a connection pool instead of a single connection
+pool_config = MYSQL_CONNECTION_INFO.copy()
+pool_config.update({
+    'pool_name': 'say_backend_pool',
+    'pool_size': 20,  # Increased pool size for more concurrent connections
+    'pool_reset_session': True,  # Reset session variables when connection is returned to pool
+    'autocommit': False,  # We'll handle commits manually
+    'connect_timeout': 10,  # Reduced timeout for faster failure
+    'use_unicode': True,
+    'charset': 'utf8mb4'
+})
+
+try:
+    cnx_pool = pooling.MySQLConnectionPool(**pool_config)
+    logger.info("Successfully created MySQL connection pool with %d connections", pool_config['pool_size'])
+except Exception as e:
+    logger.error(f"Failed to create MySQL connection pool: {e}")
+    exit(1)
+
+# Test the pool with a single connection to verify database schema
+try:
+    test_cnx = cnx_pool.get_connection()
+    test_cur = test_cnx.cursor()
+    test_cur.execute("SELECT VERSION()")
+    result = test_cur.fetchone()
+    db_version = result[0] if result and isinstance(result, tuple) else "Unknown"
+    logger.info(f"MySQL database version: {db_version}")
+    
+    apply_migrations(test_cnx, migrations_dir="migrations")
+
+    test_cur.close()
+    test_cnx.close()
+    
+except Exception as e:
+    logger.error(f"Failed to setup database connection: {e}")
+    exit(1)
+
+# Connection health check tracking
+last_health_check = None
+health_check_interval = timedelta(minutes=5)  # Only check health every 5 minutes
+health_check_lock = threading.Lock()
+
+@app.before_request
+def add_contextual_cursor():
+    """Get a connection from the pool and create a cursor for this request, unless static/healthcheck."""
+    g.request_start_time = time.time()
+    global last_health_check
+
+    # Skip DB setup for static/healthcheck routes
+    if request.endpoint in ('index', 'static') or request.path in ('/', '/health'):
+        return
+
+    # Timing start
+    t0 = time.time()
+    try:
+        g.cnx = cnx_pool.get_connection()
+        t1 = time.time()
+        
+        # Only do health checks periodically, not on every request
+        current_time = datetime.now()
+        should_check_health = False
+        
+        with health_check_lock:
+            if last_health_check is None or (current_time - last_health_check) > health_check_interval:
+                should_check_health = True
+                last_health_check = current_time
+        
+        # Perform health check only if needed
+        if should_check_health:
+            try:
+                g.cnx.ping(reconnect=True)
+                logger.debug("Database health check passed")
+            except Exception as ping_error:
+                logger.warning(f"Database ping failed, but continuing with fresh connection: {ping_error}")
+        
+        # Use unbuffered cursor for faster creation unless buffering is needed
+        g.cursor = g.cnx.cursor(buffered=False)
+        t2 = time.time()
+        logger.debug(f"DB connection acquired in {(t1-t0):.4f}s, cursor in {(t2-t1):.4f}s")
+    except Exception as e:
+        logger.error(f"Failed to get database connection from pool: {e}")
+        g.cnx = None
+        g.cursor = None
+
+@app.teardown_request
+def teardown_request(exception):
+    """Close the database cursor and return connection to pool after each request."""
+    cursor: MySQLCursor = g.pop('cursor', None)
+    cnx = g.pop('cnx', None)
+    
+    if cursor is not None:
+        try:
+            cursor.close()
+        except Exception as e:
+            logger.warning(f"Error closing cursor: {e}")
+    
+    if cnx is not None:
+        try:
+            if exception is None:
+                cnx.commit()  # Commit successful requests
+            else:
+                cnx.rollback()  # Rollback failed requests
+                logger.warning(f"Rolling back transaction due to exception: {exception}")
+        except Exception as e:
+            logger.warning(f"Error handling transaction: {e}")
+        finally:
+            try:
+                cnx.close()  # Return connection to pool
+            except Exception as e:
+                logger.warning(f"Error returning connection to pool: {e}")
+
+@app.after_request
+def log_request(response):
+    """Log the request and response details."""
+    status_code = response.status_code
+    # Flask default request log format: method path status_code remote_addr user_agent
+    # Include query parameters in the log if present
+    query_string = f"?{request.query_string.decode()}" if request.query_string else ""
+    logging.getLogger('app.request').info(
+        '%s %s%s %s %s %s "%s"',
+        request.method,
+        request.path,
+        query_string,
+        status_code,
+        request.remote_addr,
+        # how long the request took
+        f"{(time.time() - g.request_start_time):.2f}s",
+        request.headers.get('User-Agent', 'Unknown')
+    )
+    
+    return response
 
 CORS(app, resources = {
     "/*": {
@@ -77,22 +201,24 @@ CORS(app, resources = {
 
 app.register_blueprint(email_subscription_bp, url_prefix='/api')
 app.register_blueprint(bp_healthcheck, url_prefix='/')
+app.register_blueprint(program_signup_bp, url_prefix="/api/registration")
 logger.info("SAY Website Backend version %s starting up", __version__)
 # Send startup notification
-if not app.debug and getenv("FLASK_ENV") != "development":
+if not app.debug and os.getenv("FLASK_ENV") != "development":
     discord_notifier.send_startup_notification("SAY Website Backend")
 
-if getenv("NO_EMAIL"):
+if os.getenv("NO_EMAIL"):
     logger.warning("Email functionality is disabled due to NO_EMAIL environment variable being set.")
 else:
     logger.info("Email function is enabled.")
-    if not getenv("GOOGLE_APP_PASSWORD"):
+    if not os.getenv("GOOGLE_APP_PASSWORD"):
         logger.warning("* GOOGLE_APP_PASSWORD is not set.")
 
 @app.before_request
 def before_request():
     """Log incoming requests for diagnostic purposes."""
 
+    
     # Do we have the X-Forwarded-For header?
     usingForwardedFor = False
     if 'X-Forwarded-For' in request.headers:
@@ -103,22 +229,31 @@ def before_request():
         # Use the direct remote address
         request.remote_addr = request.remote_addr or "Unknown"
 
-    warningDirectHit = "*(Warning: Direct hit to the server, or `X-Forwarded-For` header missing!)*" if not usingForwardedFor else ""
-    if not app.debug:
+    warningDirectHit = "\n-# (Warning: Direct hit to the server, or the `X-Forwarded-For` header is missing!)" if not usingForwardedFor else ""
+
+    # fcnl = From Client Not Logged
+    fcnl = not (request.args.get("fcnl") is None)
+    if not app.debug and not fcnl and request.method != "OPTIONS":
         discord_notifier.send_plaintext(
             message = f"**[Request]** {request.method} {request.path} from {request.remote_addr} {warningDirectHit}",
             username = "Request Logger Subsystem",
         )
 
+
+
 @app.errorhandler(500)
 def handle_internal_error(error):
     """Handle internal server errors and send Discord notification."""
-    logger.error(f"Internal server error: {error}")
+    import traceback
+    
+    # Get full traceback for debugging
+    tb_str = traceback.format_exc()
+    logger.error(f"Internal server error: {error}\nTraceback:\n{tb_str}")
     
     # Send error notification to Discord
     discord_notifier.send_diagnostic(
         level="error",
-        service="Flask Application", 
+        service="Flask Application",
         message="Internal server error occurred",
         details={
             "Error": str(error),
@@ -128,7 +263,17 @@ def handle_internal_error(error):
         }
     )
     
-    return "An internal server error occurred. Please try again later.", 500
+    # In debug mode, return detailed error information including traceback
+    if app.debug:
+        return jsonify({
+            "error": "Internal server error",
+            "message": str(error),
+            "traceback": tb_str,
+            "endpoint": request.path if request else "Unknown",
+            "method": request.method if request else "Unknown"
+        }), 500
+    else:
+        return "An internal server error occurred. Please try again later.", 500
 
 @app.errorhandler(404)
 def handle_not_found(error):
@@ -141,9 +286,17 @@ def index():
     """Health check endpoint."""
     return "All systems operational. API is running."
 
-# Register shutdown handler to gracefully close Discord notification system
+# Register shutdown handler to gracefully close Discord notification system and database pool
 @atexit.register
 def shutdown_handler():
-    """Gracefully shutdown the Discord notification system."""
+    """Gracefully shutdown the Discord notification system and database connection pool."""
     logger.info("Application shutting down, closing Discord notification system")
     discord_notifier.shutdown()
+    
+    # Close the connection pool
+    try:
+        # Note: mysql.connector.pooling doesn't have a direct close_all method,
+        # but connections will be closed when the pool object is garbage collected
+        logger.info("Database connection pool will be closed on application exit")
+    except Exception as e:
+        logger.warning(f"Error during connection pool shutdown: {e}")

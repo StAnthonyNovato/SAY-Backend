@@ -10,6 +10,7 @@ from email.mime.multipart import MIMEMultipart
 from typing import Optional, Dict, List, Any
 from datetime import datetime, timedelta
 from logging import getLogger
+from flask import g
 
 class EmailHeaders:
     def __init__(self, headers: dict):
@@ -134,6 +135,7 @@ class SMTPManager:
         """Record that an email was sent for rate limiting purposes"""
         now = datetime.now()
         
+        cursor = g.cursor
         # Record in global history
         self.email_history.append(now)
         
@@ -141,6 +143,16 @@ class SMTPManager:
         if to_email not in self.per_email_history:
             self.per_email_history[to_email] = []
         self.per_email_history[to_email].append(now)
+
+        cursor = g.cursor
+        if not cursor: return
+
+        cursor.execute((
+            "INSERT INTO email_log (to_email, subject, body_text, body_html)"
+            "VALUES (%s, %s, %s, %s)",
+            
+            
+        ))
 
     def send_email(self, to_email: str, subject: str, message: str, html_content: Optional[str] = None, 
                    max_per_email_per_day: int = 2, bypass_rate_limit: bool = False):

@@ -1,9 +1,7 @@
 flask
+gunicorn
 flask-cors
-flask-sqlalchemy
-sqlalchemy
-alembic
-pymysql
 requests
 python-dotenv # debug-only
 dhooks
+setuptools-scm

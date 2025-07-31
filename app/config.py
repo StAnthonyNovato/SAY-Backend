@@ -10,11 +10,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
-    # Database Configuration
-    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///dev.db")
-    SQLALCHEMY_DATABASE_URI = DATABASE_URL
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    
     # Email Configuration
     GOOGLE_APP_PASSWORD = os.getenv("GOOGLE_APP_PASSWORD")
     EMAIL = os.getenv("EMAIL", "stanthonyyouth.noreply@gmail.com")
@@ -24,3 +19,11 @@ class Config:
     
     # Rate limiting
     EMAIL_RATE_LIMIT_PER_DAY = int(os.getenv("EMAIL_RATE_LIMIT_PER_DAY", "2"))
+
+MYSQL_CONNECTION_INFO = {
+    "host": os.getenv("MYSQL_HOST", "127.0.0.1"),
+    "user": os.getenv("MYSQL_USER", None),
+    "port": int(os.getenv("MYSQL_PORT", 3306)),
+    "password": os.getenv("MYSQL_PASSWORD", None),
+    "database": os.getenv("MYSQL_DATABASE", None)
+}
