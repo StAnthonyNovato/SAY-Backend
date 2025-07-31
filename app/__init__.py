@@ -8,11 +8,28 @@ from flask_cors import CORS
 import atexit
 import logging
 import os
-if not os.path.exists(os.getenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus_multiproc_dir")):
+
+logger = logging.getLogger("app")
+
+prometheus_multiproc_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus_multiproc_dir")
+if not os.path.exists(prometheus_multiproc_dir):
     # Create the directory if it doesn't exist
-    logger = logging.getLogger("app")
-    logger.info("Creating Prometheus multiprocess directory at %s", os.getenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus_multiproc_dir"))
-    os.mkdir(os.getenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus_multiproc_dir"))
+    logger.info("Creating Prometheus multiprocess directory at %s", prometheus_multiproc_dir)
+    os.mkdir(prometheus_multiproc_dir)
+
+# delete contents of prometheus_multiproc_dir on startup
+for filename in os.listdir(prometheus_multiproc_dir):
+    file_path = os.path.join(prometheus_multiproc_dir, filename)
+    try:
+        if os.path.isfile(file_path) or os.path.islink(file_path):
+            os.unlink(file_path)
+            logger.debug(f"Deleted file: {file_path}")
+        elif os.path.isdir(file_path):
+            os.rmdir(file_path)
+            logger.debug(f"Deleted directory: {file_path}")
+    except Exception as e:
+        logger.error(f"Failed to delete {file_path}. Reason: {e}")
+
 from prometheus_client import multiprocess, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 from mysql.connector.cursor import MySQLCursor
 from mysql.connector import (
@@ -62,8 +79,8 @@ from .bp.program_signup import program_signup_bp
 app = Flask(__name__)
 app.debug = app.debug or (os.getenv("FLASK_DEBUG", False) != False or os.getenv("FLASK_ENV", False) == "development")
 
-metrics = GunicornPrometheusMetrics(app, group_by='endpoint', path="/metrics", defaults_prefix="say_website_backend_")
-metrics.info('app', 'SAY Website Backend', version=__version__)
+prom_metrics = GunicornPrometheusMetrics(app, group_by='endpoint', path="/metrics", defaults_prefix="say_website_backend_")
+prom_metrics.info('app', 'SAY Website Backend', version=__version__)
 
 logger.info("Using MySQL Connector/Python version: %s", mysql_version)
 logger.info("Connecting to MySQL database with config:")
@@ -114,7 +131,7 @@ health_check_interval = timedelta(minutes=5)  # Only check health every 5 minute
 health_check_lock = threading.Lock()
 
 @app.route("/metrics")
-def metrics():
+def metrics_route():
     registry = CollectorRegistry()
     multiprocess.MultiProcessCollector(registry)
     return Response(generate_latest(registry), mimetype=CONTENT_TYPE_LATEST)
