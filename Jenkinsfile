@@ -25,13 +25,15 @@ pipeline {
                     def hosts = env.HOSTS.split(',')
                     def tasks = [:]
                     for (host in hosts) {
-                        tasks[host] = {
+                        def thisHost = host
+                        tasks[thisHost] = {
+                            def currentHost = thisHost
                             sshagent(['stanthonyyouth-server']) {
                                 sh """
                                     mkdir -p ~/.ssh
                                     chmod 700 ~/.ssh
-                                    ssh-keyscan -H ${host} >> ~/.ssh/known_hosts
-                                    ssh ${env.REMOTE_USER}@${host} " \
+                                    ssh-keyscan -H ${currentHost} >> ~/.ssh/known_hosts
+                                    ssh ${env.REMOTE_USER}@${currentHost} " \
                                         sudo /bin/systemctl stop say-backend.service
                                         rm -rf ${env.REMOTE_PATH}/* ${env.REMOTE_PATH}/.[!.]* ${env.REMOTE_PATH}/..?*  # Clear the remote directory, including hidden files
                                     "
@@ -47,22 +49,28 @@ pipeline {
             steps {
                 script {
                     def hosts = env.HOSTS.split(',')
+                    def tasks = [:]
                     for (host in hosts) {
-                        sshagent(['stanthonyyouth-server']) { 
-                            sh """
-                                ssh-keyscan -H ${host} >> ~/.ssh/known_hosts
-                                python3 -m pip install setuptools-scm
-                                python3 -c "import setuptools_scm; print(setuptools_scm.get_version())" > version.txt
-                                rsync -avz --delete \
-                                    --exclude='.git' \
-                                    --exclude='Jenkinsfile' \
-                                    --exclude='*.log' \
-                                    --exclude='*venv*' \
-                                    --exclude='*.pyc' \
-                                    ./ ${env.REMOTE_USER}@${host}:${env.REMOTE_PATH}/
-                            """
+                        def thisHost = host
+                        tasks[thisHost] = {
+                            def currentHost = thisHost
+                            sshagent(['stanthonyyouth-server']) { 
+                                sh """
+                                    ssh-keyscan -H ${currentHost} >> ~/.ssh/known_hosts
+                                    python3 -m pip install setuptools-scm
+                                    python3 -c "import setuptools_scm; print(setuptools_scm.get_version())" > version.txt
+                                    rsync -avz --delete \
+                                        --exclude='.git' \
+                                        --exclude='Jenkinsfile' \
+                                        --exclude='*.log' \
+                                        --exclude='*venv*' \
+                                        --exclude='*.pyc' \
+                                        ./ ${env.REMOTE_USER}@${currentHost}:${env.REMOTE_PATH}/
+                                """
+                            }
                         }
                     }
+                    parallel tasks
                 }
             }
         }
@@ -71,10 +79,10 @@ pipeline {
                 script {
                     def hosts = env.HOSTS.split(',')
                     def tasks = [:]
-                    for (int i = 0; i < hosts.size(); i++) {
-                        def host = hosts[i] // <-- define inside the loop
-                        tasks[host] = {
-                            def currentHost = host // <-- define inside the closure
+                    for (host in hosts) {
+                        def thisHost = host
+                        tasks[thisHost] = {
+                            def currentHost = thisHost
                             sshagent(['stanthonyyouth-server']) { 
                                 sh """
                                     ssh ${env.REMOTE_USER}@${currentHost} " \
@@ -96,11 +104,13 @@ pipeline {
                     def hosts = env.HOSTS.split(',')
                     def tasks = [:]
                     for (host in hosts) {
-                        tasks[host] = {
+                        def thisHost = host
+                        tasks[thisHost] = {
+                            def currentHost = thisHost
                             sshagent(['stanthonyyouth-server']) { 
                                 sh """
-                                    ssh-keyscan -H ${host} >> ~/.ssh/known_hosts
-                                    ssh ${env.REMOTE_USER}@${host} " \
+                                    ssh-keyscan -H ${currentHost} >> ~/.ssh/known_hosts
+                                    ssh ${env.REMOTE_USER}@${currentHost} " \
                                         sudo /bin/systemctl restart say-backend.service
                                     "
                                 """
