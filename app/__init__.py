@@ -7,7 +7,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import atexit
 import logging
-from os import getenv
+import os
 from mysql.connector.cursor import MySQLCursor
 from mysql.connector import (
     connect,
@@ -16,7 +16,7 @@ from mysql.connector import (
     pooling,
     __version__ as mysql_version)
 from .config import MYSQL_CONNECTION_INFO
-from .utility import MultiLineFormatter, GunicornWorkerFilter
+from .utility import MultiLineFormatter, GunicornWorkerFilter, apply_migrations
 from .version import __version__
 from datetime import datetime, timedelta
 from flask import g
@@ -26,9 +26,9 @@ import time
 
 faulthandler.enable()
 # Configure logging
-level = (logging.DEBUG if getenv("FLASK_ENV") == "development" or getenv("DEBUG_LOGGING") != None else logging.INFO)
+level = (logging.DEBUG if os.getenv("FLASK_ENV") == "development" or os.getenv("DEBUG_LOGGING") != None else logging.INFO)
 
-formatter = MultiLineFormatter(f'[%(worker_id)s] %(asctime)-21s %(levelname)-8s %(name)-12s | %(message)s', datefmt="%Y-%m-%d %H:%M:%S")
+formatter = MultiLineFormatter(f'%(asctime)-21s %(levelname)-8s %(name)-12s | %(message)s', datefmt="%Y-%m-%d %H:%M:%S")
 handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 handler.addFilter(GunicornWorkerFilter())  # Add the Gunicorn worker ID filter
@@ -50,9 +50,10 @@ for lgr in logging.root.manager.loggerDict.keys():
 from .bp.email_subscription import email_subscription_bp
 from .discord import discord_notifier
 from .bp.healthcheck import bp_healthcheck
+from .bp.program_signup import program_signup_bp
 
 app = Flask(__name__)
-app.debug = app.debug or (getenv("FLASK_DEBUG", False) != False or getenv("FLASK_ENV", False) == "development")
+app.debug = app.debug or (os.getenv("FLASK_DEBUG", False) != False or os.getenv("FLASK_ENV", False) == "development")
 
 logger.info("Using MySQL Connector/Python version: %s", mysql_version)
 logger.info("Connecting to MySQL database with config:")
@@ -88,24 +89,13 @@ try:
     db_version = result[0] if result and isinstance(result, tuple) else "Unknown"
     logger.info(f"MySQL database version: {db_version}")
     
-    # Initialize database schema
-    with open("databaseSchema.sql", "r") as file:
-        schema_sql = file.read()
-        commands = schema_sql.split(';')
-        commands = [cmd.strip() for cmd in commands if cmd.strip()]  # Remove empty commands
-        for command in commands:
-            try:
-                test_cur.execute(command)
-            except MySQLError as e:
-                logger.error(f"Error executing command '{command}': {e}")
-        test_cnx.commit()
-        logger.info(f"Database schema initialized successfully. ({len(commands)} commands executed)")
-    
+    apply_migrations(test_cnx, migrations_dir="migrations")
+
     test_cur.close()
     test_cnx.close()
     
 except Exception as e:
-    logger.error(f"Failed to test database connection: {e}")
+    logger.error(f"Failed to setup database connection: {e}")
     exit(1)
 
 # Connection health check tracking
@@ -211,16 +201,17 @@ CORS(app, resources = {
 
 app.register_blueprint(email_subscription_bp, url_prefix='/api')
 app.register_blueprint(bp_healthcheck, url_prefix='/')
+app.register_blueprint(program_signup_bp, url_prefix="/api/registration")
 logger.info("SAY Website Backend version %s starting up", __version__)
 # Send startup notification
-if not app.debug and getenv("FLASK_ENV") != "development":
+if not app.debug and os.getenv("FLASK_ENV") != "development":
     discord_notifier.send_startup_notification("SAY Website Backend")
 
-if getenv("NO_EMAIL"):
+if os.getenv("NO_EMAIL"):
     logger.warning("Email functionality is disabled due to NO_EMAIL environment variable being set.")
 else:
     logger.info("Email function is enabled.")
-    if not getenv("GOOGLE_APP_PASSWORD"):
+    if not os.getenv("GOOGLE_APP_PASSWORD"):
         logger.warning("* GOOGLE_APP_PASSWORD is not set.")
 
 @app.before_request
@@ -248,6 +239,8 @@ def before_request():
             username = "Request Logger Subsystem",
         )
 
+
+
 @app.errorhandler(500)
 def handle_internal_error(error):
     """Handle internal server errors and send Discord notification."""
@@ -260,7 +253,7 @@ def handle_internal_error(error):
     # Send error notification to Discord
     discord_notifier.send_diagnostic(
         level="error",
-        service="Flask Application", 
+        service="Flask Application",
         message="Internal server error occurred",
         details={
             "Error": str(error),

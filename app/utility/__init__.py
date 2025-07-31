@@ -4,3 +4,4 @@
 # https://opensource.org/licenses/MIT
 
 from .loggingFormatters import MultiLineFormatter, GunicornWorkerFilter
+from .applyMigrations import apply_migrations
