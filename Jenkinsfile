@@ -84,7 +84,6 @@ pipeline {
                                         cd ${env.REMOTE_PATH} && \
                                         rm -rf ${env.VENV_DIR} && \
                                         python3 -m venv ${env.VENV_DIR} && \
-                                        ${env.VENV_DIR}/bin/python -m pip install --upgrade pip && \
                                         ${env.VENV_DIR}/bin/python -m pip install -r requirements.txt
                                     "
                                 """
