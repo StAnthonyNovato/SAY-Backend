@@ -4,4 +4,5 @@ flask-cors
 requests
 python-dotenv # debug-only
 dhooks
+mysql-connector-python
 setuptools-scm
