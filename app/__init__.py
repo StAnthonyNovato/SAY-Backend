@@ -234,6 +234,7 @@ def before_request():
     # fcnl = From Client Not Logged
     fcnl = not (request.args.get("fcnl") is None)
     if not app.debug and not fcnl and request.method != "OPTIONS":
+        if request.path in ("/health", "/healthcheck", "/api/health", "/api/healthcheck"): return
         discord_notifier.send_plaintext(
             message = f"**[Request]** {request.method} {request.path} from {request.remote_addr} {warningDirectHit}",
             username = "Request Logger Subsystem",

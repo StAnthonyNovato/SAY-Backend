@@ -32,6 +32,8 @@ pipeline {
 
                         ssh ${REMOTE_USER}@${REMOTE_HOST} " \
                             sudo /bin/systemctl stop say-backend.service
+                            rm -rf /opt/stanthonyyouth/*  # Clear the remote directory
+                        
                         "
                     '''
                 }
