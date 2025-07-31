@@ -145,6 +145,11 @@ def add_contextual_cursor():
         g.cnx = None
         g.cursor = None
 
+@app.route("/heartbeat", methods=["GET"])
+def heartbeat():
+    """Health check endpoint."""
+    return jsonify({"status": "ok"}), 200
+
 @app.teardown_request
 def teardown_request(exception):
     """Close the database cursor and return connection to pool after each request."""

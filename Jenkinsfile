@@ -12,7 +12,7 @@ pipeline {
     }
 
     environment {
-        HOSTS = "10.0.0.167" // Comma-separated list of hosts
+        HOSTS = "10.0.0.167,10.0.0.168" // Comma-separated list of hosts
         REMOTE_USER = 'say'
         REMOTE_PATH = '/opt/stanthonyyouth'
         VENV_DIR = "${REMOTE_PATH}/venv"
