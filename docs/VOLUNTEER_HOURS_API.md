@@ -107,7 +107,7 @@ This document describes the REST API endpoints for the Volunteer Hours system.
 
 **GET** `/api/volunteer_hours/all`
 
-- **Description:** Retrieve all volunteer hour logs, including user info.
+- **Description:** Retrieve all non-deleted volunteer hour logs, including user info.
 - **Response:**
     - `200 OK` with a JSON array of all logs.
 
@@ -133,7 +133,7 @@ This document describes the REST API endpoints for the Volunteer Hours system.
 
 **GET** `/api/volunteer_hours/view`
 
-- **Description:** View all volunteer data in a simple HTML table for quick review.
+- **Description:** View all non-deleted volunteer data in a simple HTML table for quick review.
 - **Response:**
     - `200 OK` with an HTML page.
 
@@ -143,7 +143,7 @@ This document describes the REST API endpoints for the Volunteer Hours system.
 
 **GET** `/api/volunteer_hours/view/<id>`
 
-- **Description:** Retrieve all information for a single user, including total hours, name, email, and a list of their volunteer history.
+- **Description:** Retrieve all information for a single user, including total hours, name, email, and a list of their non-deleted volunteer history.
 - **Response:**
     - `200 OK` with a JSON object containing user info, total hours, and a `history` array of all their volunteer logs.
     - `404 Not Found` if the user does not exist.
@@ -176,6 +176,34 @@ This document describes the REST API endpoints for the Volunteer Hours system.
 
 ---
 
+### 7. Delete a Volunteer Hours Entry
+
+**POST** `/api/volunteer_hours/delete/<log_id>`
+
+- **Description:** Soft delete a volunteer hours entry by ID.
+- **URL Parameters:**
+    - `log_id` (int, required): The ID of the volunteer hours entry to delete.
+- **Response:**
+    - `200 OK` with a success message if the entry was deleted.
+    - `404 Not Found` if the entry doesn't exist or is already deleted.
+    - `500 Internal Server Error` if there was a database error.
+
+**Example Response (Success):**
+```json
+{
+  "message": "Volunteer hours entry with ID 10 deleted successfully"
+}
+```
+
+**Example Response (Not Found):**
+```json
+{
+  "error": "Volunteer hours entry with ID 10 not found"
+}
+```
+
+---
+
 ## Error Responses
 
 - `400 Bad Request`: Missing or invalid fields in the request.
@@ -188,3 +216,4 @@ This document describes the REST API endpoints for the Volunteer Hours system.
 - All endpoints are CORS-enabled for use with static web frontends.
 - All dates must be in `YYYY-MM-DD` format.
 - All responses are `application/json` except for the `/view` endpoint, which returns HTML.
+- Soft-deleted entries (where `deleted = TRUE`) are excluded from all data retrieval endpoints.

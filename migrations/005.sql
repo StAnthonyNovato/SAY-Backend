@@ -9,5 +9,6 @@ CREATE TABLE IF NOT EXISTS volunteer_hours (
     date DATE NOT NULL,
     hours DECIMAL(4,2) NOT NULL,
     notes TEXT,
+    deleted BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

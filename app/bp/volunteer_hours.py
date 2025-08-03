@@ -23,7 +23,7 @@ def log_volunteer_hours():
     required_fields = ['user_id', 'date', 'hours']
     for field in required_fields:
         if field not in data:
-            return jsonify({'error': f'Missing required field: {field}'}), 400
+            return jsonify({'error': f'Missing required field: {field}'}), 4008
 
     user_id = data['user_id']
     date = data['date']
@@ -136,6 +136,7 @@ def get_all_volunteer_data():
         SELECT vh.id, vh.user_id, vu.name, vu.email, vh.date, vh.hours, vh.notes, vh.created_at
         FROM volunteer_hours vh
         JOIN volunteer_users vu ON vh.user_id = vu.id
+        WHERE vh.deleted = FALSE
         ORDER BY vh.date DESC
     """)
     data = [
@@ -164,6 +165,7 @@ def view_volunteer_data():
         SELECT vh.id, vu.name, vu.email, vh.date, vh.hours, vh.notes, vh.created_at
         FROM volunteer_hours vh
         JOIN volunteer_users vu ON vh.user_id = vu.id
+        WHERE vh.deleted = FALSE
         ORDER BY vh.date DESC
     """)
     data = cursor.fetchall()
@@ -201,7 +203,7 @@ def view_user_volunteer_data(user_id):
     cursor.execute("""
         SELECT id, date, hours, notes, created_at
         FROM volunteer_hours
-        WHERE user_id = %s
+        WHERE user_id = %s AND deleted = FALSE
         ORDER BY date DESC
     """, (user_id,))
     logs = cursor.fetchall()
@@ -223,3 +225,31 @@ def view_user_volunteer_data(user_id):
         'total_hours': total_hours,
         'history': history
     })
+
+# POST route to delete a volunteer hours entry (soft delete)
+@volunteer_hours_bp.route('/delete/<int:log_id>', methods=['POST'])
+def delete_volunteer_hours(log_id):
+    cursor = g.cursor
+    logger.debug(f"Attempting to delete volunteer hours entry with ID: {log_id}")
+    
+    # Check if entry exists
+    cursor.execute("SELECT id, user_id, hours FROM volunteer_hours WHERE id = %s AND deleted = FALSE", (log_id,))
+    entry = cursor.fetchone()
+    if not entry:
+        logger.warning(f"Volunteer hours entry with ID {log_id} not found or already deleted")
+        return jsonify({'error': f'Volunteer hours entry with ID {log_id} not found'}), 404
+    
+    # Soft delete the entry
+    try:
+        cursor.execute("UPDATE volunteer_hours SET deleted = TRUE WHERE id = %s", (log_id,))
+        g.cnx.commit()
+        logger.info(f"Volunteer hours entry with ID {log_id} soft deleted successfully")
+        try:
+            discord_notifier.send_plaintext(f"Volunteer hours entry deleted: id={log_id}, user_id={entry[1]}, hours={entry[2]}")
+        except Exception as e:
+            logger.warning(f"Failed to notify Discord: {e}")
+        return jsonify({'message': f'Volunteer hours entry with ID {log_id} deleted successfully'}), 200
+    except Exception as e:
+        g.cnx.rollback()
+        logger.error(f"Error deleting volunteer hours entry: {e}")
+        return jsonify({'error': str(e)}), 500
