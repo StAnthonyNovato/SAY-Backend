@@ -75,6 +75,7 @@ from .bp.email_subscription import email_subscription_bp
 from .discord import discord_notifier
 from .bp.healthcheck import bp_healthcheck
 from .bp.program_signup import program_signup_bp
+from .bp.volunteer_hours import volunteer_hours_bp
 
 app = Flask(__name__)
 app.debug = app.debug or (os.getenv("FLASK_DEBUG", False) != False or os.getenv("FLASK_ENV", False) == "development")
@@ -174,6 +175,10 @@ def add_contextual_cursor():
         t2 = time.time()
         logger.debug(f"DB connection acquired in {(t1-t0):.4f}s, cursor in {(t2-t1):.4f}s")
     except Exception as e:
+        discord_notifier.send_error_notification(
+            service = "Database Connection [add_contextual_cursor]",
+            error = e
+        )
         logger.error(f"Failed to get database connection from pool: {e}")
         g.cnx = None
         g.cursor = None
@@ -237,9 +242,25 @@ CORS(app, resources = {
     }
 })
 
+@app.route("/routes", methods=["GET"])
+def list_routes():
+    """List all registered routes in the application."""
+    output = []
+    for rule in app.url_map.iter_rules():
+        methods = ','.join(rule.methods)
+        output.append(f"{rule.endpoint} {methods} {rule.rule}")
+
+    return jsonify({
+        "routes": output,
+        "count": len(output),
+        "timestamp": datetime.utcnow().isoformat()
+    }), 200
+
 app.register_blueprint(email_subscription_bp, url_prefix='/api')
 app.register_blueprint(bp_healthcheck, url_prefix='/')
 app.register_blueprint(program_signup_bp, url_prefix="/api/registration")
+app.register_blueprint(volunteer_hours_bp, url_prefix="/api/volunteer_hours")
+
 logger.info("SAY Website Backend version %s starting up", __version__)
 # Send startup notification
 if not app.debug and os.getenv("FLASK_ENV") != "development":

@@ -167,5 +167,5 @@ def health():
     _healthcheck_cache["status_code"] = status_code
 
     resp = make_response(jsonify(health_status), status_code)
-    resp.headers["X-Cache"] = "MISS"
+    resp.headers["X-Cache"] = " `"
     return resp
