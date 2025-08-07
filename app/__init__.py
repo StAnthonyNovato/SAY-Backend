@@ -132,6 +132,7 @@ health_check_interval = timedelta(minutes=5)  # Only check health every 5 minute
 health_check_lock = threading.Lock()
 
 @app.route("/metrics")
+@prom_metrics.do_not_track()
 def metrics_route():
     registry = CollectorRegistry()
     multiprocess.MultiProcessCollector(registry)
@@ -184,6 +185,7 @@ def add_contextual_cursor():
         g.cursor = None
 
 @app.route("/heartbeat", methods=["GET"])
+@prom_metrics.do_not_track()
 def heartbeat():
     """Health check endpoint."""
     return jsonify({"status": "ok"}), 200
