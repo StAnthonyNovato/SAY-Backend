@@ -8,6 +8,7 @@ from flask_cors import CORS
 import atexit
 import logging
 import os
+import socket  # <-- Add this import
 
 logger = logging.getLogger("app")
 
@@ -235,7 +236,8 @@ def log_request(response):
         f"{(time.time() - g.request_start_time):.2f}s",
         request.headers.get('User-Agent', 'Unknown')
     )
-    
+    # Add X-Server-Node header
+    response.headers['X-Server-Node'] = socket.gethostname()
     return response
 
 CORS(app, resources = {
