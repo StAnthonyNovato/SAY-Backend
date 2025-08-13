@@ -317,13 +317,17 @@ def handle_internal_error(error):
     discord_notifier.send_diagnostic(
         level="error",
         service="Flask Application",
-        message="Internal server error occurred",
+        message="Internal server error occurred:\n\n```\n" + tb_str + "\n```",
         details={
             "Error": str(error),
             "Endpoint": request.path if request else "Unknown",
             "Method": request.method if request else "Unknown",
             "User Agent": request.headers.get('User-Agent', 'Unknown') if request else "Unknown"
         }
+    )
+    discord_notifier.send_plaintext(
+        message=f"**[Error]** Internal server error: {error}\n\nTraceback:\n```python\n{tb_str}\n```",
+        username="Error Logger Subsystem"
     )
     
     # In debug mode, return detailed error information including traceback

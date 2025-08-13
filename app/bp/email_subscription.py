@@ -13,6 +13,7 @@ import threading
 from enum import Enum
 from typing import Optional, Tuple
 from logging import getLogger
+import traceback
 
 email_subscription_bp = Blueprint('email_subscription', __name__)
 logger = getLogger(__name__)
@@ -222,6 +223,10 @@ def send_confirmation_email(email: str, confirmation_code: str):
         
         raise
 
+def get_formatted_traceback():
+    """Return a formatted string with the traceback information"""
+    return traceback.format_exc()
+
 @email_subscription_bp.route("/rateLimitInternals")
 def rate_limit_internals():
     """Internal endpoint to view rate limit storage for debugging"""
@@ -373,12 +378,19 @@ def subscribe():
             return jsonify(response_data), 200
         
     except Exception as e:
+        # Get the traceback information
+        error_traceback = get_formatted_traceback()
+        current_app.logger.error(f"Error in /subscribe: {str(e)}\n{error_traceback}")
+        
         # Send error notification to Discord 
         discord_notifier.send_error_notification(
             service="Email Service",
             error=e,
             context=f"Failed to process subscription for {email} (action: {email_state.value if 'email_state' in locals() else 'unknown'})"
         )
+        
+        # Send the traceback as a code block to Discord
+        discord_notifier.send_plaintext(f"```python\n{error_traceback}\n```")
         
         return jsonify({
             "success": False,
@@ -398,83 +410,107 @@ def confirm():
             "message": "Confirmation code is required"
         }), 400
 
-    cursor = g.cursor
-    if cursor is None:
-        current_app.logger.error("No database cursor available for confirmation")
-        return jsonify({
-            "success": False,
-            "error": "Database connection error",
-            "message": "Unable to process confirmation at this time"
-        }), 500
-    
-    # Look up the confirmation token in the database
-    cursor.execute("""
-        SELECT id, email, confirmed FROM newsletter 
-        WHERE confirmation_token = %s
-    """, (code,))
-    
-    subscription = cursor.fetchone()
-    
-    if not subscription:
-        # Invalid confirmation code
-        v_code = code
-        if len(v_code) > 200:
-            v_code = code[:200] + "..."  # Truncate long codes for logging
-        discord_notifier.send_diagnostic(
-            level="warning",
-            service="Email Service",
-            message="Invalid confirmation code attempted",
-            details={
-                "Confirmation Code": code,
-                "Action": "Confirmation Failed"
-            }
+    try:
+        cursor = g.cursor
+        if cursor is None:
+            current_app.logger.error("No database cursor available for confirmation")
+            return jsonify({
+                "success": False,
+                "error": "Database connection error",
+                "message": "Unable to process confirmation at this time"
+            }), 500
+        
+        # Look up the confirmation token in the database
+        cursor.execute("""
+            SELECT id, email, confirmed FROM newsletter 
+            WHERE confirmation_token = %s
+        """, (code,))
+        
+        subscription = cursor.fetchone()
+        
+        if not subscription:
+            # Invalid confirmation code
+            v_code = code
+            if len(v_code) > 200:
+                v_code = code[:200] + "..."  # Truncate long codes for logging
+            discord_notifier.send_diagnostic(
+                level="warning",
+                service="Email Service",
+                message="Invalid confirmation code attempted",
+                details={
+                    "Confirmation Code": v_code,
+                    "Action": "Confirmation Failed"
+                }
+            )
+            
+            return jsonify({
+                "success": False,
+                "error": "Invalid confirmation code",
+                "message": "The confirmation code is invalid or has expired"
+            }), 400
+        
+        subscription_id, email, is_confirmed = subscription
+        
+        if is_confirmed:
+            # Already confirmed
+            return jsonify({
+                "success": True,
+                "message": "Email was already confirmed",
+                "email": email,
+                "status": "already_confirmed"
+            }), 200
+        
+        # Confirm the subscription
+        cursor.execute("""
+            UPDATE newsletter 
+            SET confirmed = TRUE, updated_at = CURRENT_TIMESTAMP 
+            WHERE id = %s
+        """, (subscription_id,))
+        
+        # Send confirmation success notification to Discord
+        discord_notifier.send_embed(
+            title="✅ Email Confirmation Successful",
+            description="A user has successfully confirmed their email subscription",
+            color=0x00ff00,  # Green
+            fields=[
+                {"name": "Email", "value": email, "inline": True},
+                {"name": "Status", "value": "Confirmed ✅", "inline": True},
+                {"name": "Confirmation Code", "value": code[:8] + "...", "inline": True}
+            ],
+            footer={"text": "SAY Website Backend • Email Service"}
         )
+        
+        current_app.logger.info(f"Successfully confirmed email subscription for: {email}")
+        
+        return jsonify({
+            "success": True,
+            "message": "Email confirmed successfully! You're now subscribed to our newsletter.",
+            "email": email,
+            "status": "confirmed"
+        }), 200
+    
+    except Exception as e:
+        # Get the traceback information
+        error_traceback = get_formatted_traceback()
+        current_app.logger.error(f"Error in /confirm: {str(e)}\n{error_traceback}")
+        
+        # Send error notification to Discord
+        discord_notifier.send_error_notification(
+            service="Email Service",
+            error=e,
+            context=f"Failed to process email confirmation with code: {code[:8] if code and len(code) > 8 else code}... (if available)"
+        )
+        
+        # Send the traceback as a code block to Discord
+        
+        error_traceback = error_traceback[750:]
+        discord_notifier.send_plaintext(f"```python\n{error_traceback}\n```")
         
         return jsonify({
             "success": False,
-            "error": "Invalid confirmation code",
-            "message": "The confirmation code is invalid or has expired"
-        }), 400
-    
-    subscription_id, email, is_confirmed = subscription
-    
-    if is_confirmed:
-        # Already confirmed
-        return jsonify({
-            "success": True,
-            "message": "Email was already confirmed",
-            "email": email,
-            "status": "already_confirmed"
-        }), 200
-    
-    # Confirm the subscription
-    cursor.execute("""
-        UPDATE newsletter 
-        SET confirmed = TRUE, updated_at = CURRENT_TIMESTAMP 
-        WHERE id = %s
-    """, (subscription_id,))
-    
-    # Send confirmation success notification to Discord
-    discord_notifier.send_embed(
-        title="✅ Email Confirmation Successful",
-        description="A user has successfully confirmed their email subscription",
-        color=0x00ff00,  # Green
-        fields=[
-            {"name": "Email", "value": email, "inline": True},
-            {"name": "Status", "value": "Confirmed ✅", "inline": True},
-            {"name": "Confirmation Code", "value": code[:8] + "...", "inline": True}
-        ],
-        footer={"text": "SAY Website Backend • Email Service"}
-    )
-    
-    current_app.logger.info(f"Successfully confirmed email subscription for: {email}")
-    
-    return jsonify({
-        "success": True,
-        "message": "Email confirmed successfully! You're now subscribed to our newsletter.",
-        "email": email,
-        "status": "confirmed"
-    }), 200
+            "error": str(e),
+            "message": "Failed to process confirmation. Please try again later."
+        }), 500
 
 # Testing commands:
 # Subscribe: curl -X POST -H "Content-Type: application/json" -d '{"email": "damien@alphagame.dev"}' http://localhost:8000/api/subscribe
