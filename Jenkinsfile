@@ -12,113 +12,41 @@ pipeline {
     }
 
     environment {
-        HOSTS = "10.0.0.167,10.0.0.168" // Comma-separated list of hosts
-        REMOTE_USER = 'say'
-        REMOTE_PATH = '/opt/stanthonyyouth'
-        VENV_DIR = "${REMOTE_PATH}/venv"
+        DOCKER_HUB_TOKEN = credentials('alphagamedev-docker-token')
     }
     
     stages {
-        stage("Stop Service") {
+        stage('Get Version') {
             steps {
                 script {
-                    def hosts = env.HOSTS.split(',')
-                    def tasks = [:]
-                    for (host in hosts) {
-                        def thisHost = host
-                        tasks[thisHost] = {
-                            def currentHost = thisHost
-                            sshagent(['stanthonyyouth-server']) {
-                                sh """
-                                    mkdir -p ~/.ssh
-                                    chmod 700 ~/.ssh
-                                    ssh-keyscan -H ${currentHost} >> ~/.ssh/known_hosts
-                                    ssh ${env.REMOTE_USER}@${currentHost} " \
-                                        sudo /bin/systemctl stop say-backend.service
-                                        rm -rf ${env.REMOTE_PATH}/* ${env.REMOTE_PATH}/.[!.]* ${env.REMOTE_PATH}/..?*  # Clear the remote directory, including hidden files
-                                    "
-                                """
-                            }
-                        }
-                    }
-                    parallel tasks
+                    // use setuptools-scm
+                    sh "pip install setuptools-scm"
+                    def version = sh(script: "python -c 'import setuptools_scm; print(setuptools_scm.get_version())'", returnStdout: true).trim()
+                    env.VERSION = version
                 }
             }
         }
-        stage('Sync Files') {
+        stage("Build Container") {
             steps {
                 script {
-                    def hosts = env.HOSTS.split(',')
-                    def tasks = [:]
-                    for (host in hosts) {
-                        def thisHost = host
-                        tasks[thisHost] = {
-                            def currentHost = thisHost
-                            sshagent(['stanthonyyouth-server']) { 
-                                sh """
-                                    ssh-keyscan -H ${currentHost} >> ~/.ssh/known_hosts
-                                    python3 -m pip install setuptools-scm
-                                    python3 -c "import setuptools_scm; print(setuptools_scm.get_version())" > version.txt
-                                    rsync -avz --delete \
-                                        --exclude='.git' \
-                                        --exclude='Jenkinsfile' \
-                                        --exclude='*.log' \
-                                        --exclude='*venv*' \
-                                        --exclude='*.pyc' \
-                                        ./ ${env.REMOTE_USER}@${currentHost}:${env.REMOTE_PATH}/
-                                """
-                            }
-                        }
-                    }
-                    parallel tasks
+                    sh "docker build -t alphagamedev/say-backend:${env.VERSION} ."
                 }
             }
         }
-        stage('Download Dependencies') {
+        stage("Push to Docker Hub") {
             steps {
                 script {
-                    def hosts = env.HOSTS.split(',')
-                    def tasks = [:]
-                    for (host in hosts) {
-                        def thisHost = host
-                        tasks[thisHost] = {
-                            def currentHost = thisHost
-                            sshagent(['stanthonyyouth-server']) { 
-                                sh """
-                                    ssh ${env.REMOTE_USER}@${currentHost} " \
-                                        cd ${env.REMOTE_PATH} && \
-                                        python3 -m venv ${env.VENV_DIR} && \
-                                        ${env.VENV_DIR}/bin/python -m pip install -r requirements.txt
-                                    "
-                                """
-                            }
-                        }
-                    }
-                    parallel tasks
+                    sh "echo ${DOCKER_HUB_TOKEN} | docker login -u alphagamedev --password-stdin"
+                    sh "docker tag alphagamedev/say-backend:${env.VERSION} alphagamedev/say-backend:latest"
+                    sh "docker push alphagamedev/say-backend:${env.VERSION}"
+                    sh "docker push alphagamedev/say-backend:latest"
                 }
             }
         }
-        stage('Restart Service') {
-            steps {
-                script {
-                    def hosts = env.HOSTS.split(',')
-                    def tasks = [:]
-                    for (host in hosts) {
-                        def thisHost = host
-                        tasks[thisHost] = {
-                            def currentHost = thisHost
-                            sshagent(['stanthonyyouth-server']) { 
-                                sh """
-                                    ssh-keyscan -H ${currentHost} >> ~/.ssh/known_hosts
-                                    ssh ${env.REMOTE_USER}@${currentHost} " \
-                                        sudo /bin/systemctl restart say-backend.service
-                                    "
-                                """
-                            }
-                        }
-                    }
-                    parallel tasks
-                }
+
+        stage("Regenerate Compose on Server and Deploy") {
+            sshagent(['stanthonyyouth2']) {
+                sh "ssh damien@10.0.0.65 'cd /home/damien/stanthonyyouth/ && ./generateCompose.py ${env.VERSION}' && docker compose up -d"
             }
         }
     }
