@@ -49,26 +49,35 @@ class Healthcheck:
             "message": "Message not set",
             "details": {}
         }
-        noDB = False
-        cnx = getattr(self.g, 'cnx', None)
-        if cnx is None:
-            cursor = getattr(self.g, 'cursor', None)
-            if cursor is None:
-                noDB = True
-
-        if noDB:
-            self.result["checks"]["database"]["status"] = "unhealthy"
-            self.result["checks"]["database"]["message"] = "MySQL connection not initialized"
-            self.overall_healthy = False
-        else:
+        
+        # Get connection pool from app context instead of relying on g.cnx
+        # which is intentionally skipped for health check routes
+        try:
+            # Access the connection pool from the app module globals
+            from .. import cnx_pool
+            
+            # Get a connection from the pool to test it
+            test_cnx = cnx_pool.get_connection()
             try:
-                cnx.ping(reconnect=True, attempts=3, delay=1)
+                test_cnx.ping(reconnect=True, attempts=3, delay=1)
                 self.result["checks"]["database"]["status"] = "healthy"
                 self.result["checks"]["database"]["message"] = "MySQL connection is healthy"
             except Exception as e:
                 self.result["checks"]["database"]["status"] = "unhealthy"
                 self.result["checks"]["database"]["message"] = f"MySQL connection failed: {str(e)}"
                 self.overall_healthy = False
+            finally:
+                # Always return connection to pool
+                test_cnx.close()
+                
+        except ImportError:
+            self.result["checks"]["database"]["status"] = "unhealthy"
+            self.result["checks"]["database"]["message"] = "MySQL connection pool not available (import failed)"
+            self.overall_healthy = False
+        except Exception as e:
+            self.result["checks"]["database"]["status"] = "unhealthy"
+            self.result["checks"]["database"]["message"] = f"Failed to get database connection: {str(e)}"
+            self.overall_healthy = False
 
     def check_email(self):
         try:
