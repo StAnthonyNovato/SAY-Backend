@@ -49,8 +49,14 @@ class Healthcheck:
             "message": "Message not set",
             "details": {}
         }
-        cnx = self.g.cnx if hasattr(self.g, 'cnx') else None
-        if not cnx:
+        noDB = False
+        cnx = getattr(self.g, 'cnx', None)
+        if cnx is None:
+            cursor = getattr(self.g, 'cursor', None)
+            if cursor is None:
+                noDB = True
+
+        if noDB:
             self.result["checks"]["database"]["status"] = "unhealthy"
             self.result["checks"]["database"]["message"] = "MySQL connection not initialized"
             self.overall_healthy = False
