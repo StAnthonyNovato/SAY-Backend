@@ -22,6 +22,7 @@ pipeline {
                     // use setuptools-scm
                     sh "pip install setuptools-scm"
                     def version = sh(script: "python3 -c 'import setuptools_scm; print(setuptools_scm.get_version())'", returnStdout: true).trim()
+                    version = version.replace('+', '-').replace(':', '-')
                     env.VERSION = version
                 }
             }
