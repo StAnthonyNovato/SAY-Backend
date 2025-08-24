@@ -46,7 +46,7 @@ pipeline {
 
         stage("Regenerate Compose on Server and Deploy") {
             sshagent(['stanthonyyouth2']) {
-                sh "ssh damien@10.0.0.65 'cd /home/damien/stanthonyyouth/ && ./generateCompose.py ${env.VERSION}' && docker compose up -d"
+                sh "ssh damien@10.0.0.65 'cd /home/damien/stanthonyyouth/ && ./generateCompose.py ${env.VERSION} && docker compose up -d'"
             }
         }
     }
