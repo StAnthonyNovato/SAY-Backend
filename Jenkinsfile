@@ -21,7 +21,7 @@ pipeline {
                 script {
                     // use setuptools-scm
                     sh "pip install setuptools-scm"
-                    def version = sh(script: "python -c 'import setuptools_scm; print(setuptools_scm.get_version())'", returnStdout: true).trim()
+                    def version = sh(script: "python3 -c 'import setuptools_scm; print(setuptools_scm.get_version())'", returnStdout: true).trim()
                     env.VERSION = version
                 }
             }
