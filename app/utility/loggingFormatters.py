@@ -5,6 +5,8 @@
 
 import logging
 from os import getenv, getpid
+from flask import request
+
 class MultiLineFormatter(logging.Formatter):
     """Custom logging formatter that handles multi-line messages.
     
@@ -50,4 +52,13 @@ class GunicornWorkerFilter(logging.Filter):
             record.worker_id = "worker" + worker_id
         else:
             record.worker_id = f"PID {getpid()}"
+        return True
+    
+class NoDockerHealthcheckFilter(logging.Filter):
+    """Filter to exclude health check requests from logs."""
+    
+    def filter(self, record):
+        # Exclude health check requests from logs
+        if request.args.get("reason", None) == "DockerAutomatedHealthcheck" and "health" in request.path:
+            return False
         return True

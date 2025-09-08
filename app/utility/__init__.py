@@ -3,5 +3,5 @@
 # This software is released under the MIT License.
 # https://opensource.org/licenses/MIT
 
-from .loggingFormatters import MultiLineFormatter, GunicornWorkerFilter
+from .loggingFormatters import MultiLineFormatter, GunicornWorkerFilter, NoDockerHealthcheckFilter
 from .applyMigrations import apply_migrations

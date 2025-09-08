@@ -8,7 +8,6 @@ from flask_cors import CORS
 import atexit
 import logging
 import os
-import socket  # <-- Add this import
 
 logger = logging.getLogger("app")
 
@@ -41,7 +40,7 @@ from mysql.connector import (
     __version__ as mysql_version)
 from prometheus_flask_exporter.multiprocess import GunicornPrometheusMetrics
 from .config import MYSQL_CONNECTION_INFO
-from .utility import MultiLineFormatter, GunicornWorkerFilter, apply_migrations
+from .utility import MultiLineFormatter, GunicornWorkerFilter, apply_migrations, NoDockerHealthcheckFilter
 from .version import __version__
 from datetime import datetime, timedelta
 from flask import g
@@ -57,6 +56,7 @@ formatter = MultiLineFormatter(f'%(asctime)-21s %(levelname)-8s %(name)-12s | %(
 handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 handler.addFilter(GunicornWorkerFilter())  # Add the Gunicorn worker ID filter
+logging.getLogger("werkzeug").addFilter(NoDockerHealthcheckFilter())
 logging.basicConfig(level=level, handlers=[handler])
 logger = logging.getLogger("app")
 # Ensure all app loggers use the GunicornWorkerFilter and correct formatter
@@ -218,33 +218,48 @@ def teardown_request(exception):
             except Exception as e:
                 logger.warning(f"Error returning connection to pool: {e}")
 
-@app.after_request
-def log_request(response):
-    """Log the request and response details."""
-    status_code = response.status_code
-    # Flask default request log format: method path status_code remote_addr user_agent
-    # Include query parameters in the log if present
-    query_string = f"?{request.query_string.decode()}" if request.query_string else ""
-    logging.getLogger('app.request').info(
-        '%s %s%s %s %s %s "%s"',
-        request.method,
-        request.path,
-        query_string,
-        status_code,
-        request.remote_addr,
-        # how long the request took
-        f"{(time.time() - g.request_start_time):.2f}s",
-        request.headers.get('User-Agent', 'Unknown')
-    )
-    # Add X-Server-Node header
-    response.headers['X-Server-Node'] = socket.gethostname()
-    return response
+# @app.after_request
+# def log_request(response):
+#     """Log the request and response details."""
+#     status_code = response.status_code
+#     # Flask default request log format: method path status_code remote_addr user_agent
+#     # Include query parameters in the log if present
+#     query_string = f"?{request.query_string.decode()}" if request.query_string else ""
+#     logging.getLogger('app.request').info(
+#         '%s %s%s %s %s %s "%s"',
+#         request.method,
+#         request.path,
+#         query_string,
+#         status_code,
+#         request.remote_addr,
+#         # how long the request took
+#         f"{(time.time() - g.request_start_time):.2f}s",
+#         request.headers.get('User-Agent', 'Unknown')
+#     )
+#     # Add X-Server-Node header
+#     response.headers['X-Server-Node'] = socket.gethostname()
+#     return response
 
 CORS(app, resources = {
     "/*": {
         "origins": "*" # TODO: Change this to the specific origin in production
     }
 })
+
+# Expose X-Server-Node header to clients via CORS
+import socket
+@app.after_request
+def expose_server_node_header(response):
+    response.headers['X-Server-Node'] = socket.gethostname()
+    # Expose the header to browsers
+    existing = response.headers.get('Access-Control-Expose-Headers')
+    expose = 'X-Server-Node, x-server-node'
+    if existing:
+        if expose not in existing:
+            response.headers['Access-Control-Expose-Headers'] = f"{existing}, {expose}"
+    else:
+        response.headers['Access-Control-Expose-Headers'] = expose
+    return response
 
 @app.route("/routes", methods=["GET"])
 def list_routes():
