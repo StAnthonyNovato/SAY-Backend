@@ -12,6 +12,7 @@ from app.models.volunteer_hours import VolunteerHour
 from app.discord import discord_notifier
 import datetime
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 volunteer_hours_bp = Blueprint('volunteer_hours', __name__)
@@ -48,7 +49,7 @@ def log_volunteer_hours():
             INSERT INTO volunteer_hours (user_id, date, hours, notes)
             VALUES (%s, %s, %s, %s)
             """,
-            (user_id, date, hours, notes)
+            (user_id, date, hours, re.escape(notes))
         )
         g.cnx.commit()
         new_id = cursor.lastrowid
