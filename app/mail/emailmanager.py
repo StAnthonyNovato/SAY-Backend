@@ -147,12 +147,11 @@ class SMTPManager:
         cursor = g.cursor
         if not cursor: return
 
-        cursor.execute((
-            "INSERT INTO email_log (to_email, subject, body_text, body_html)"
-            "VALUES (%s, %s, %s, %s)",
-            
-            
-        ))
+        # FIX: Remove extra parentheses so this is a string, not a tuple!
+        cursor.execute(
+            "INSERT INTO email_log (to_email, subject, body_text, body_html) VALUES (%s, %s, %s, %s)",
+            (to_email, "", "", "")
+        )
 
     def send_email(self, to_email: str, subject: str, message: str, html_content: Optional[str] = None, 
                    max_per_email_per_day: int = 2, bypass_rate_limit: bool = False):
@@ -289,4 +288,3 @@ class SMTPManager:
             self.smtp_connection.quit()
             self.smtp_connection = None
 
-    

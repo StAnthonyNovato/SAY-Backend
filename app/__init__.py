@@ -266,7 +266,7 @@ def list_routes():
     """List all registered routes in the application."""
     output = []
     for rule in app.url_map.iter_rules():
-        methods = ','.join(rule.methods)
+        methods = ','.join(rule.methods or [])
         output.append(f"{rule.endpoint} {methods} {rule.rule}")
 
     return jsonify({

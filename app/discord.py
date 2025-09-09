@@ -491,9 +491,9 @@ class DiscordNotificationManager:
         }
         if context:
             details['Context'] = context
-            
-        self.send_diagnostic('error', service, 'An error occurred', details)
-    
+
+        self.send_diagnostic('error', service, 'An error occurred\n```{}```'.format(repr(error)), details)
+
     def shutdown(self):
         """Gracefully shutdown the notification manager."""
         logger.info("Shutting down Discord notification manager")
