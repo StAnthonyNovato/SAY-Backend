@@ -81,6 +81,8 @@ from .bp.volunteer_hours import volunteer_hours_bp
 app = Flask(__name__)
 app.debug = app.debug or (os.getenv("FLASK_DEBUG", False) != False or os.getenv("FLASK_ENV", False) == "development")
 
+STARTTIME = time.time()
+
 prom_metrics = GunicornPrometheusMetrics(app, group_by='endpoint', path="/metrics", defaults_prefix="say_website_backend_")
 prom_metrics.info('app', 'SAY Website Backend', version=__version__)
 
@@ -368,7 +370,7 @@ def handle_not_found(error):
 @app.route('/')
 def index():
     """Root Endpoint"""
-    return "<h1>All systems operational. API is running.</h1><p>Version: <b>%s</b></p><p>Server Node: %s</p><!-- app.index -->" % (__version__, socket.gethostname())
+    return "<h1>All systems operational. API is running.</h1><p>Version: <b>%s</b></p><p>Server Node: <b>%s</b></p><p><b>Node Uptime: <b>%s</b> seconds (<b>%s</b> hours)</p><!-- app.index -->" % (__version__, socket.gethostname(), str(time.time() - STARTTIME), str((time.time() - STARTTIME) / 3600))
 
 # Register shutdown handler to gracefully close Discord notification system and database pool
 @atexit.register
