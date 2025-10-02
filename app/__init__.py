@@ -367,8 +367,8 @@ def handle_not_found(error):
 
 @app.route('/')
 def index():
-    """Health check endpoint."""
-    return "All systems operational. API is running."
+    """Root Endpoint"""
+    return "<h1>All systems operational. API is running.</h1><p>Version: <b>%s</b></p><p>Server Node: %s</p><!-- app.index -->" % (__version__, socket.gethostname())
 
 # Register shutdown handler to gracefully close Discord notification system and database pool
 @atexit.register
