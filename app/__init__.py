@@ -370,7 +370,13 @@ def handle_not_found(error):
 @app.route('/')
 def index():
     """Root Endpoint"""
-    return "<h1>All systems operational. API is running.</h1><p>Version: <b>%s</b></p><p>Server Node: <b>%s</b></p><p><b>Node Uptime: <b>%s</b> seconds (<b>%s</b> hours)</p><!-- app.index -->" % (__version__, socket.gethostname(), str(time.time() - STARTTIME), str((time.time() - STARTTIME) / 3600))
+    uptime_seconds = time.time() - STARTTIME
+    days = int(uptime_seconds // 86400)
+    hours = int((uptime_seconds % 86400) // 3600)
+    minutes = int((uptime_seconds % 3600) // 60)
+    seconds = int(uptime_seconds % 60)
+    
+    return "<h1>All systems operational. API is running.</h1><p>Version: <b>%s</b></p><p>Server Node: <b>%s</b></p><p>Node Uptime: <b>%s</b> seconds (<b>%s</b> days, <b>%s</b> hours, <b>%s</b> minutes, and <b>%s</b> seconds)</p><!-- app.index -->" % (__version__, socket.gethostname(), round(uptime_seconds), days, hours, minutes, seconds)
 
 # Register shutdown handler to gracefully close Discord notification system and database pool
 @atexit.register
